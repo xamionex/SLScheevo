@@ -15,3 +15,6 @@ Windows: build_and_run.bat (Do launch in CMD please!)
 
 Linux: ./run.sh
 Windows: run.bat
+
+## Demonstration:
+![GIF](https://git.petar.cc/petar/slscheevo/-/raw/main/demonstration.gif?ref_type=heads)
