@@ -86,10 +86,10 @@ def get_account_id64(client):
 def parse_libraryfolders_vdf():
     """Parse libraryfolders.vdf to extract app IDs"""
     if not LIBRARY_FILE.exists():
-        print(f"Error: Steam library file not found at {LIBRARY_FILE}")
+        print(f"[✗] Steam library file not found at {LIBRARY_FILE}")
         sys.exit(1)
 
-    print(f"Reading Steam library from: {LIBRARY_FILE}")
+    print(f"[→] Reading Steam library from: {LIBRARY_FILE}")
 
     content = LIBRARY_FILE.read_text()
     # Extract all app IDs using regex
@@ -118,18 +118,18 @@ def get_stats_schema(client, game_id, owner_id):
 def check_single_owner(args, client):
     """Check a single owner for stats schema"""
     game_id, owner_id = args
-    print(f"    → Requesting stats schema for {game_id} using owner {owner_id}")
+    print(f"    [→] Requesting stats schema for {game_id} using owner {owner_id}")
     try:
         out = get_stats_schema(client, game_id, owner_id)
 
         if out is not None and len(out.body.schema) > 0:
             schema = out.body.schema
-            print(f"    ✓ Got schema ({len(schema)} bytes) from owner {owner_id}")
+            print(f"    [✓] Got schema ({len(schema)} bytes) from owner {owner_id}")
             return schema
         else:
-            print(f"    – Empty schema for owner {owner_id}")
+            print(f"    [?] Empty schema for owner {owner_id}")
     except Exception as e:
-        print(f"    ✗ Exception for owner {owner_id}: {e}")
+        print(f"    [✗] Exception for owner {owner_id}: {e}")
         traceback.print_exc()
     return None
 
@@ -204,18 +204,18 @@ def steam_login():
             pass
 
     # Try environment variables first
-    USERNAME = os.environ.get('GSE_CFG_USERNAME', '')
-    PASSWORD = os.environ.get('GSE_CFG_PASSWORD', '')
+    USERNAME = os.environ.get('USERNAME', '')
+    PASSWORD = os.environ.get('PASSWORD', '')
 
     # If still no username, check saved tokens or prompt
     if not USERNAME:
         users = {i: user for i, user in enumerate(refresh_tokens, 1)}
         if users:
-            print("Saved accounts:")
+            print("[→] Saved accounts:")
             for i, user in users.items():
-                print(f"{i}: {user}")
+                print(f"[{i}]: {user}")
             try:
-                num = int(input("Choose an account to login (0 for new account): "))
+                num = int(input("[→] Choose an account to login (0 for new account): "))
                 if num > 0:
                     USERNAME = users.get(num)
             except ValueError:
@@ -223,8 +223,8 @@ def steam_login():
 
     # Still no username? ask user
     if not USERNAME:
-        print("Didn't find steam account, please log in")
-        USERNAME = input("Steam Username: ").strip()
+        print("[!] Didn't find steam account, please log in")
+        USERNAME = input("[→] Steam Username: ").strip()
 
     REFRESH_TOKEN = refresh_tokens.get(USERNAME)
 
@@ -238,7 +238,7 @@ def steam_login():
         if result in (EResult.TryAnotherCM, EResult.ServiceUnavailable):
             if prompt_for_unavailable and result == EResult.ServiceUnavailable:
                 while True:
-                    answer = input("Steam is down. Keep retrying? [y/n]: ").lower()
+                    answer = input("[!] Steam is down. Keep retrying? [y/n]: ").lower()
                     if answer in 'yn':
                         break
 
@@ -248,17 +248,17 @@ def steam_login():
 
             client.reconnect(maxdelay=15)
         elif result == EResult.InvalidPassword:
-            print("✗ Invalid password or refresh_token.")
-            print(f"Correct the password or delete '{REFRESH_TOKENS}' and try again.")
+            print("[✗] Invalid password or refresh_token.")
+            print(f"[!] Correct the password or delete '{REFRESH_TOKENS}' and try again.")
             return None
 
         if not REFRESH_TOKEN:
             try:
                 if not PASSWORD:
-                    PASSWORD = input("Steam Password: ").strip()
+                    PASSWORD = input("[→] Steam Password: ").strip()
                 webauth.cli_login(USERNAME, PASSWORD)
             except Exception as e:
-                print(f'✗ Login failed: {e}')
+                print(f'[✗] Login failed: {e}')
                 return None
 
             USERNAME, PASSWORD = webauth.username, webauth.password
@@ -272,9 +272,9 @@ def steam_login():
         try:
             with open(REFRESH_TOKENS, 'w') as f:
                 json.dump(refresh_tokens, f, indent=4)
-            print(f"✓ Saved login token for {USERNAME}")
+            print(f"[✓] Saved login token for {USERNAME}")
         except Exception as e:
-            print(f"Warning: Could not save login token: {e}")
+            print(f"[✗] Could not save login token: {e}")
 
     if result == EResult.OK:
         print("[✓] Logged into Steam successfully")
@@ -299,20 +299,38 @@ def copy_bins_to_steam_stats():
     DEST_DIR.mkdir(parents=True, exist_ok=True)
 
     if not OUTPUT_DIR.exists():
-        print(f"[Warning] Source directory {OUTPUT_DIR} does not exist.")
+        print(f"[✗] Source directory {OUTPUT_DIR} does not exist. Skipped copying")
         return
 
     files_copied = 0
     for file_path in OUTPUT_DIR.glob("*"):
-        if file_path.is_file():
-            dest_path = DEST_DIR / file_path.name
+        if not file_path.is_file():
+            continue
+
+        dest_path = DEST_DIR / file_path.name
+
+        # Schema files: always overwrite
+        if file_path.name.startswith("UserGameStatsSchema_"):
             try:
                 shutil.copy2(file_path, dest_path)
                 files_copied += 1
+                print(f"[✓] Overwrote Schema File: {dest_path.name}")
             except Exception as e:
-                print(f"[Error] Failed to copy {file_path} -> {dest_path}: {e}")
+                print(f"[✗] Failed to copy schema {file_path} -> {dest_path}: {e}")
 
-    print(f"Copied {files_copied} files to {DEST_DIR}")
+        # User stats files: only copy if not already present
+        elif file_path.name.startswith("UserGameStats_"):
+            if dest_path.exists():
+                print(f"[!] Stats file already exists: {dest_path.name}")
+                continue
+            try:
+                shutil.copy2(file_path, dest_path)
+                files_copied += 1
+                print(f"[✓] Copied Stats File: {dest_path.name}")
+            except Exception as e:
+                print(f"[✗] Failed to copy stats {file_path} -> {dest_path}: {e}")
+
+    print(f"\n[✓] Copied {files_copied} files to {DEST_DIR}")
 
 def main():
     ensure_directories()
