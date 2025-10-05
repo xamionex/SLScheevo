@@ -8,6 +8,7 @@ import sys
 import time
 import traceback
 import requests
+import platform
 from pathlib import Path
 
 from steam.client import SteamClient
@@ -16,17 +17,22 @@ from steam.enums.common import EResult
 from steam.enums.emsg import EMsg
 from steam.webauth import WebAuth
 
-# Steam Data
-STEAM_DIR = Path.home() / '.local/share/Steam'
-LIBRARY_FILE = STEAM_DIR / 'steamapps/libraryfolders.vdf'
-DEST_DIR = STEAM_DIR / 'appcache/stats'
+# Determine Steam base directory
+if platform.system() == "Windows":
+    # Default Windows install path
+    STEAM_DIR = Path("C:/Program Files (x86)/Steam")
+else:
+    STEAM_DIR = Path.home() / ".local/share/Steam"
+
+LIBRARY_FILE = STEAM_DIR / "steamapps/libraryfolders.vdf"
+DEST_DIR = STEAM_DIR / "appcache/stats"
 
 # Data
-DATA_DIR = Path('data')
-OUTPUT_DIR = DATA_DIR / Path('bins')
-SKIP_FILE = DATA_DIR / 'skip_generation'
-NO_ACH_FILE = DATA_DIR / 'no_achievement_games'
-ACCOUNTID_FILE = DATA_DIR / Path('accountid.txt')
+DATA_DIR = Path("data")
+OUTPUT_DIR = DATA_DIR / "bins"
+SKIP_FILE = DATA_DIR / "skip_generation"
+NO_ACH_FILE = DATA_DIR / "no_achievement_games"
+ACCOUNTID_FILE = DATA_DIR / "accountid.txt"
 REFRESH_TOKENS = DATA_DIR / "refresh_tokens.json"
 
 # Steam ids with public profiles that own a lot of games
@@ -61,6 +67,16 @@ def get_account_id(client):
     """Get Steam Account ID directly from logged-in client"""
     if client and hasattr(client, 'steam_id') and client.steam_id:
         account_id = client.steam_id.account_id
+        print(f"[✓] Using Account ID from logged-in client: {account_id}")
+        return str(account_id)
+
+    print("[✗] No logged-in client available for Account ID")
+    return None
+
+def get_account_id64(client):
+    """Get Steam Account ID directly from logged-in client"""
+    if client and hasattr(client, 'steam_id') and client.steam_id:
+        account_id = client.steam_id.as_64
         print(f"[✓] Using Account ID from logged-in client: {account_id}")
         return str(account_id)
 
@@ -273,6 +289,31 @@ def steam_login():
         print(f"[✗] Steam login failed: {result.name}")
         return None
 
+def copy_bins_to_steam_stats():
+    """
+    Copies all files from bins/* to the Steam appcache/stats directory
+    for the given Steam ID64.
+    """
+    # Destination stats folder per user
+    # dest_dir = steam_dir / "userdata" / steam_id64 / "config" / "stats"
+    DEST_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not OUTPUT_DIR.exists():
+        print(f"[Warning] Source directory {OUTPUT_DIR} does not exist.")
+        return
+
+    files_copied = 0
+    for file_path in OUTPUT_DIR.glob("*"):
+        if file_path.is_file():
+            dest_path = DEST_DIR / file_path.name
+            try:
+                shutil.copy2(file_path, dest_path)
+                files_copied += 1
+            except Exception as e:
+                print(f"[Error] Failed to copy {file_path} -> {dest_path}: {e}")
+
+    print(f"Copied {files_copied} files to {DEST_DIR}")
+
 def main():
     ensure_directories()
 
@@ -286,6 +327,13 @@ def main():
     account_id = get_account_id(client)
     if not account_id:
         print("[✗] Could not retrieve account ID")
+        client.logout()
+        sys.exit(1)
+        
+    # Get account ID64 from logged-in client (no file dependency)
+    account_id64 = get_account_id64(client)
+    if not account_id64:
+        print("[✗] Could not retrieve account ID64")
         client.logout()
         sys.exit(1)
 
@@ -338,6 +386,8 @@ def main():
             with open(SKIP_FILE, 'a') as f:
                 f.write(f"{app_id}\n")
             print(f"[✗] Failed to generate stats schema for appid {app_id}")
+
+    copy_bins_to_steam_stats()
 
     # Cleanup
     client.logout()
