@@ -60,7 +60,7 @@ def ensure_directories():
 def get_account_id(client):
     """Get Steam Account ID directly from logged-in client"""
     if client and hasattr(client, 'steam_id') and client.steam_id:
-        account_id = client.steam_id.as_64
+        account_id = client.steam_id.account_id
         print(f"[✓] Using Account ID from logged-in client: {account_id}")
         return str(account_id)
 
