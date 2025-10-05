@@ -1,0 +1,15 @@
+# IDE
+**/.vs
+**/.vscode
+**/.idea
+
+# PYTHON
+**/.venv
+**/__pycache__
+
+# SPECIFIC
+/build
+/third-party
+
+data/**
+!data/no_achievement_games
