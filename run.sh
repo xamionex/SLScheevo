@@ -10,7 +10,7 @@ fi
 source .venv/bin/activate
 
 # Run the script
-python cheevonator.py "$@"
+python SLScheevo.py "$@"
 
 # Deactivate virtual environment
 deactivate

@@ -2,8 +2,8 @@
 setlocal enabledelayedexpansion
 
 REM Script to create virtual environment and build with PyInstaller
-set SCRIPT_NAME=cheevonator.py
-set OUTPUT_NAME=cheevonator.exe
+set SCRIPT_NAME=SLScheevo.py
+set OUTPUT_NAME=SLScheevo.exe
 
 echo Setting up build environment...
 

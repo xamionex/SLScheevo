@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Script to create virtual environment and build with PyInstaller
-SCRIPT_NAME="cheevonator.py"
-OUTPUT_NAME="cheevonator"
+SCRIPT_NAME="SLScheevo.py"
+OUTPUT_NAME="SLScheevo"
 
 echo "Setting up build environment..."
 

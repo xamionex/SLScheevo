@@ -11,7 +11,7 @@ REM Activate virtual environment
 call .venv\Scripts\activate.bat
 
 REM Run the script
-python cheevonator.py %*
+python SLScheevo.py %*
 
 REM Deactivate virtual environment
 call .venv\Scripts\deactivate.bat
