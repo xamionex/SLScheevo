@@ -175,7 +175,7 @@ def generate_stats_schema_bin_parallel(game_id, account_id, client=None):
 
         user_path = OUTPUT_DIR / f"UserGameStats_{account_id}_{game_id}.bin"
         shutil.copyfile(TEMPLATE_FILE, user_path)
-        print(f"[✓] Copied template to {user_path} ({template_path.stat().st_size} bytes)")
+        print(f"[✓] Copied template to {user_path} ({TEMPLATE_FILE.stat().st_size} bytes)")
     except Exception as e:
         print(f"[✗] Error writing schema files: {e}")
         if should_logout:
