@@ -18,6 +18,3 @@ Windows: run.bat
 
 ## Demonstration:
 ![GIF](https://raw.githubusercontent.com/xamionex/SLScheevo/refs/heads/main/demonstration.gif)
-
-## Failed Generation Demonstration:
-![GIF](https://raw.githubusercontent.com/xamionex/SLScheevo/refs/heads/main/demonstration_failed_generation.gif)

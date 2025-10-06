@@ -12,5 +12,5 @@
 /third-party
 
 data/**
-!data/no_achievement_games
+!data/no_achievement_games.txt
 !data/UserGameStats_TEMPLATE.bin
