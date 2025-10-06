@@ -18,3 +18,6 @@ Windows: run.bat
 
 ## Demonstration:
 ![GIF](https://git.petar.cc/petar/slscheevo/-/raw/main/demonstration.gif?ref_type=heads)
+
+## Failed Generation Demonstration:
+![GIF](https://git.petar.cc/petar/slscheevo/-/raw/main/demonstration_failed_generation.gif?ref_type=heads)
