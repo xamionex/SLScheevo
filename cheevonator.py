@@ -9,6 +9,8 @@ import time
 import traceback
 import requests
 import platform
+import itertools
+import threading
 from pathlib import Path
 
 from steam.client import SteamClient
@@ -16,6 +18,7 @@ from steam.core.msg import MsgProto
 from steam.enums.common import EResult
 from steam.enums.emsg import EMsg
 from steam.webauth import WebAuth
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Determine Steam base directory
 if platform.system() == "Windows":
@@ -119,26 +122,20 @@ def get_stats_schema(client, game_id, owner_id):
 def check_single_owner(args, client):
     """Check a single owner for stats schema"""
     game_id, owner_id = args
-    print(f"    [→] Requesting stats schema for {game_id} using owner {owner_id}")
     try:
         out = get_stats_schema(client, game_id, owner_id)
-
         if out is not None and len(out.body.schema) > 0:
-            schema = out.body.schema
-            print(f"    [✓] Got schema ({len(schema)} bytes) from owner {owner_id}")
-            return schema
-        else:
-            print(f"    [?] Empty schema for owner {owner_id}")
+            return out.body.schema
     except Exception as e:
-        print(f"    [✗] Exception for owner {owner_id}: {e}")
-        traceback.print_exc()
+        print(f"\n    [✗] Exception for owner {owner_id}: {e}")
+        traceback.print_exc(limit=1)
     return None
 
+
 def generate_stats_schema_bin_parallel(game_id, account_id, client=None):
-    """Generate stats schema files using an existing logged-in SteamClient"""
+    """Generate stats and schema files using multiple owners in parallel"""
     print(f"\n[→] Generating stats schema for game ID {game_id}")
 
-    # Use existing client if provided
     if not client:
         client = steam_login()
         if not client:
@@ -148,27 +145,63 @@ def generate_stats_schema_bin_parallel(game_id, account_id, client=None):
     else:
         should_logout = False
 
+    total_owners = len(TOP_OWNER_IDS)
+    print(f"[→] Checking {total_owners} potential owners\n")
+
     stats_schema_found = None
     found_owner = None
+    checked = 0
+    done_flag = threading.Event()
 
-    print(f"[→] Checking {len(TOP_OWNER_IDS)} potential owners")
+    def check_owner(owner_id):
+        return owner_id, check_single_owner((game_id, owner_id), client)
 
-    for owner_id in TOP_OWNER_IDS:
-        schema_data = check_single_owner((game_id, owner_id), client)
-        if schema_data:
-            stats_schema_found = schema_data
-            found_owner = owner_id
-            print(f"[✓] Found valid schema using owner {owner_id}")
-            break
+    def update_spinner(spinner):
+        """Thread: continuously updates top spinner/progress line"""
+        while not done_flag.is_set():
+            spin = next(spinner)
+            sys.stdout.write("\033[F\033[K")  # move cursor up & clear line
+            sys.stdout.write(f"[{spin}] Checked {checked}/{total_owners} owners...\n")
+            sys.stdout.flush()
+            time.sleep(0.1)
+
+    spinner = itertools.cycle(["|", "/", "-", "\\"])
+    spinner_thread = threading.Thread(target=update_spinner, args=(spinner,), daemon=True)
+    spinner_thread.start()
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(check_owner, oid): oid for oid in TOP_OWNER_IDS}
+
+        for future in as_completed(futures):
+            owner_id = futures[future]
+            checked += 1
+            try:
+                _, schema_data = future.result()
+                if schema_data:
+                    stats_schema_found = schema_data
+                    found_owner = owner_id
+                    done_flag.set()
+                    sys.stdout.write("\033[F\033[K")
+                    sys.stdout.write(f"[✓] Found valid schema using owner {owner_id} ({checked}/{total_owners})\n")
+                    sys.stdout.flush()
+                    for f in futures:
+                        f.cancel()
+                    break
+            except Exception as e:
+                print(f"\n    [!] Error checking owner {owner_id}: {e}")
+
+    done_flag.set()
+    spinner_thread.join(timeout=0.2)
 
     if stats_schema_found is None:
-        print(f"[✗] No schema found for game {game_id} after checking all owners")
+        sys.stdout.write("\033[F\033[K")
+        print(f"[✗] No schema found for game {game_id} after checking {checked} owners")
         if should_logout:
             client.logout()
         return False
 
     try:
-        schema_path = OUTPUT_DIR / f'UserGameStatsSchema_{game_id}.bin'
+        schema_path = OUTPUT_DIR / f"UserGameStatsSchema_{game_id}.bin"
         with open(schema_path, "wb") as f:
             f.write(stats_schema_found)
         print(f"[✓] Saved {schema_path} ({len(stats_schema_found)} bytes)")
@@ -184,6 +217,7 @@ def generate_stats_schema_bin_parallel(game_id, account_id, client=None):
 
     if should_logout:
         client.logout()
+
     print(f"[✓] Finished schema generation for game {game_id} (owner {found_owner})")
     return True
 
@@ -314,19 +348,19 @@ def copy_bins_to_steam_stats():
             try:
                 shutil.copy2(file_path, dest_path)
                 files_copied += 1
-                print(f"[✓] Overwrote Schema File: {dest_path.name}")
+                print(f"[✓] Overwrote Schema File: {file_path} -> {dest_path}")
             except Exception as e:
                 print(f"[✗] Failed to copy schema {file_path} -> {dest_path}: {e}")
 
         # User stats files: only copy if not already present
         elif file_path.name.startswith("UserGameStats_"):
             if dest_path.exists():
-                print(f"[!] Stats file already exists: {dest_path.name}")
+                print(f"[!] Stats file already exists: {dest_path}")
                 continue
             try:
                 shutil.copy2(file_path, dest_path)
                 files_copied += 1
-                print(f"[✓] Copied Stats File: {dest_path.name}")
+                print(f"[✓] Copied Stats File: {file_path} -> {dest_path}")
             except Exception as e:
                 print(f"[✗] Failed to copy stats {file_path} -> {dest_path}: {e}")
 
@@ -389,13 +423,10 @@ def main():
 
     print(f"Found {len(missing_app_ids)} games missing stats schema files")
     print(f"Missing app IDs: {missing_app_ids}")
-    print()
 
     # Generate stats schema for each missing app ID
     successful_generations = 0
     for app_id in missing_app_ids:
-        print(f"Generating stats schema for appid {app_id}...")
-
         if generate_stats_schema_bin_parallel(app_id, account_id, client):
             successful_generations += 1
             print(f"[✓] Successfully generated stats schema for appid {app_id}")
@@ -405,6 +436,7 @@ def main():
                 f.write(f"{app_id}\n")
             print(f"[✗] Failed to generate stats schema for appid {app_id}")
 
+    print()
     copy_bins_to_steam_stats()
 
     # Cleanup
