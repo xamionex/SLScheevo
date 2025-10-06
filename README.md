@@ -17,7 +17,7 @@ Linux: ./run.sh
 Windows: run.bat
 
 ## Demonstration:
-![GIF](https://git.petar.cc/petar/slscheevo/-/raw/main/demonstration.gif?ref_type=heads)
+![GIF](https://raw.githubusercontent.com/xamionex/SLScheevo/refs/heads/main/demonstration.gif)
 
 ## Failed Generation Demonstration:
-![GIF](https://git.petar.cc/petar/slscheevo/-/raw/main/demonstration_failed_generation.gif?ref_type=heads)
+![GIF](https://raw.githubusercontent.com/xamionex/SLScheevo/refs/heads/main/demonstration_failed_generation.gif)
