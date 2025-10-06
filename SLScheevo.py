@@ -109,93 +109,65 @@ def read_tracking_file(file_path):
     return set(int(line.strip()) for line in file_path.read_text().splitlines() if line.strip().isdigit())
 
 def get_stats_schema(client, game_id, owner_id):
-    """Get the stats schema for a game from a specific owner"""
-    message = MsgProto(EMsg.ClientGetUserStats)
-    message.body.game_id = game_id
-    message.body.schema_local_version = -1
-    message.body.crc_stats = 0
-    message.body.steam_id_for_user = owner_id
+    """Request the stats schema for a game from a specific owner"""
+    msg = MsgProto(EMsg.ClientGetUserStats)
+    msg.body.game_id = game_id
+    msg.body.schema_local_version = -1
+    msg.body.crc_stats = 0
+    msg.body.steam_id_for_user = owner_id
 
-    client.send(message)
+    client.send(msg)
     return client.wait_msg(EMsg.ClientGetUserStatsResponse, timeout=5)
 
-def check_single_owner(args, client):
-    """Check a single owner for stats schema"""
-    game_id, owner_id = args
+def check_single_owner(game_id, owner_id, client):
+    """Return schema bytes or None"""
     try:
         out = get_stats_schema(client, game_id, owner_id)
-        if out is not None and len(out.body.schema) > 0:
-            return out.body.schema
+        if out and hasattr(out.body, "schema") and out.body.schema:
+            if len(out.body.schema) > 0:
+                return out.body.schema
     except Exception as e:
         print(f"\n    [✗] Exception for owner {owner_id}: {e}")
         traceback.print_exc(limit=1)
     return None
 
 
-def generate_stats_schema_bin_parallel(game_id, account_id, client=None):
-    """Generate stats and schema files using multiple owners in parallel"""
+def generate_stats_schema_bin(game_id, account_id, client=None):
+    """Generate stats and schema files (sequential version, no parallelism)"""
     print(f"\n[→] Generating stats schema for game ID {game_id}")
 
+    should_logout = False
     if not client:
         client = steam_login()
         if not client:
             print("[✗] Aborting schema generation - not logged in")
             return False
         should_logout = True
-    else:
-        should_logout = False
 
     total_owners = len(TOP_OWNER_IDS)
     print(f"[→] Checking {total_owners} potential owners\n")
 
     stats_schema_found = None
     found_owner = None
-    checked = 0
-    done_flag = threading.Event()
 
-    def check_owner(owner_id):
-        return owner_id, check_single_owner((game_id, owner_id), client)
+    spinner = itertools.cycle("|/-\\")
+    for i, owner_id in enumerate(TOP_OWNER_IDS, start=1):
+        sys.stdout.write(f"\r[{next(spinner)}] Checked {i-1}/{total_owners} owners...")
+        sys.stdout.flush()
 
-    def update_spinner(spinner):
-        """Thread: continuously updates top spinner/progress line"""
-        while not done_flag.is_set():
-            spin = next(spinner)
-            sys.stdout.write("\033[F\033[K")  # move cursor up & clear line
-            sys.stdout.write(f"[{spin}] Checked {checked}/{total_owners} owners...\n")
+        schema_data = check_single_owner(game_id, owner_id, client)
+        if schema_data:
+            stats_schema_found = schema_data
+            found_owner = owner_id
+            sys.stdout.write(f"\r[✓] Found valid schema using owner {owner_id} ({i}/{total_owners})\n")
             sys.stdout.flush()
-            time.sleep(0.1)
+            break
 
-    spinner = itertools.cycle(["|", "/", "-", "\\"])
-    spinner_thread = threading.Thread(target=update_spinner, args=(spinner,), daemon=True)
-    spinner_thread.start()
+        time.sleep(0.1)  # small delay to avoid hammering Steam’s API
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(check_owner, oid): oid for oid in TOP_OWNER_IDS}
-
-        for future in as_completed(futures):
-            owner_id = futures[future]
-            checked += 1
-            try:
-                _, schema_data = future.result()
-                if schema_data:
-                    stats_schema_found = schema_data
-                    found_owner = owner_id
-                    done_flag.set()
-                    sys.stdout.write("\033[F\033[K")
-                    sys.stdout.write(f"[✓] Found valid schema using owner {owner_id} ({checked}/{total_owners})\n")
-                    sys.stdout.flush()
-                    for f in futures:
-                        f.cancel()
-                    break
-            except Exception as e:
-                print(f"\n    [!] Error checking owner {owner_id}: {e}")
-
-    done_flag.set()
-    spinner_thread.join(timeout=0.2)
-
-    if stats_schema_found is None:
-        sys.stdout.write("\033[F\033[K")
-        print(f"[✗] No schema found for game {game_id} after checking {checked} owners")
+    if not stats_schema_found:
+        sys.stdout.write(f"\r[✗] No schema found for game {game_id} after checking {total_owners} owners\n")
+        sys.stdout.flush()
         if should_logout:
             client.logout()
         return False
@@ -427,7 +399,7 @@ def main():
     # Generate stats schema for each missing app ID
     successful_generations = 0
     for app_id in missing_app_ids:
-        if generate_stats_schema_bin_parallel(app_id, account_id, client):
+        if generate_stats_schema_bin(app_id, account_id, client):
             successful_generations += 1
             print(f"[✓] Successfully generated stats schema for appid {app_id}")
         else:
