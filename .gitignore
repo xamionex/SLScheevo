@@ -13,3 +13,4 @@
 
 data/**
 !data/no_achievement_games
+!data/UserGameStats_TEMPLATE.bin

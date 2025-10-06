@@ -34,6 +34,7 @@ SKIP_FILE = DATA_DIR / "skip_generation"
 NO_ACH_FILE = DATA_DIR / "no_achievement_games"
 ACCOUNTID_FILE = DATA_DIR / "accountid.txt"
 REFRESH_TOKENS = DATA_DIR / "refresh_tokens.json"
+TEMPLATE_FILE = DATA_DIR / "UserGameStats_TEMPLATE.bin"
 
 # Steam ids with public profiles that own a lot of games
 TOP_OWNER_IDS = [
@@ -172,10 +173,9 @@ def generate_stats_schema_bin_parallel(game_id, account_id, client=None):
             f.write(stats_schema_found)
         print(f"[✓] Saved {schema_path} ({len(stats_schema_found)} bytes)")
 
-        user_path = OUTPUT_DIR / f'UserGameStats_{account_id}_{game_id}.bin'
-        with open(user_path, "wb") as f:
-            f.write(stats_schema_found)
-        print(f"[✓] Saved {user_path} ({len(stats_schema_found)} bytes)")
+        user_path = OUTPUT_DIR / f"UserGameStats_{account_id}_{game_id}.bin"
+        shutil.copyfile(TEMPLATE_FILE, user_path)
+        print(f"[✓] Copied template to {user_path} ({template_path.stat().st_size} bytes)")
     except Exception as e:
         print(f"[✗] Error writing schema files: {e}")
         if should_logout:
