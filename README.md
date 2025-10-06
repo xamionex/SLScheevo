@@ -1,6 +1,6 @@
 # SLScheevo
 
-Achievement generator for steam HEAVILY inspired by detanups' generate_emu_config tool, check them out!
+Achievement generator for [SLSsteam](https://github.com/AceSLS/SLSsteam), originally forked from [Detanups old GBE_Tools](https://github.com/Detanup01/gbe_fork_tools/), stripped logic and automated
 
 ## Prerequisites:
 
