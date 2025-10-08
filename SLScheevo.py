@@ -28,6 +28,7 @@ else:
     STEAM_DIR = Path.home() / ".local/share/Steam"
 
 LIBRARY_FILE = STEAM_DIR / "steamapps/libraryfolders.vdf"
+LOGIN_FILE = STEAM_DIR / "config/loginusers.vdf"
 DEST_DIR = STEAM_DIR / "appcache/stats"
 
 # Data
@@ -35,7 +36,6 @@ DATA_DIR = Path("data")
 OUTPUT_DIR = DATA_DIR / "bins"
 SKIP_FILE = DATA_DIR / "skip_generation.txt"
 NO_ACH_FILE = DATA_DIR / "no_achievement_games.txt"
-ACCOUNTID_FILE = DATA_DIR / "accountid.txt"
 MAX_TRIES_FILE = DATA_DIR / "maximum_tries.txt"
 REFRESH_TOKENS = DATA_DIR / "refresh_tokens.json"
 TEMPLATE_FILE = DATA_DIR / "UserGameStats_TEMPLATE.bin"
@@ -234,10 +234,25 @@ def generate_stats_schema_bin(game_id, account_id, max_no_schema_in_row, client=
     print(f"[✓] Finished schema generation for game {game_id} (owner {found_owner})")
     return True
 
+def parse_loginusers_vdf():
+    """Return a list of all account names from loginusers.vdf"""
+    if not LOGIN_FILE.exists():
+        return []
+
+    content = LOGIN_FILE.read_text(encoding="utf-8", errors="ignore")
+
+    # Match all account entries
+    users = re.findall(
+        r'"(\d+)"\s*{\s*[^}]*?"AccountName"\s*"([^"]+)"',
+        content,
+        re.DOTALL
+    )
+
+    return [name for _, name in users]
+
 def steam_login():
     """Login to Steam using refresh tokens or interactive login"""
     client = SteamClient()
-
     # File to save/load credentials
     refresh_tokens = {}
 
@@ -247,34 +262,38 @@ def steam_login():
             with open(REFRESH_TOKENS) as f:
                 lf = json.load(f)
                 refresh_tokens = lf if isinstance(lf, dict) else {}
-        except:
+        except Exception:
             pass
 
     # Try environment variables first
     USERNAME = os.environ.get('USERNAME', '')
     PASSWORD = os.environ.get('PASSWORD', '')
 
-    # If still no username, check saved tokens or prompt
+    # Try to get account list from loginusers.vdf if no username provided
     if not USERNAME:
-        users = {i: user for i, user in enumerate(refresh_tokens, 1)}
-        if users:
-            print("[→] Saved accounts:")
-            for i, user in users.items():
+        vdf_users = parse_loginusers_vdf()
+        saved_users = list(refresh_tokens.keys())
+
+        # Merge and deduplicate, preserving order
+        all_users = list(dict.fromkeys(saved_users + vdf_users))
+
+        if all_users:
+            print("[→] Available accounts:")
+            for i, user in enumerate(all_users, 1):
                 print(f"[{i}]: {user}")
             try:
                 num = int(input("[→] Choose an account to login (0 for new account): "))
-                if num > 0:
-                    USERNAME = users.get(num)
+                if 0 < num <= len(all_users):
+                    USERNAME = all_users[num - 1]
             except ValueError:
                 pass
 
     # Still no username? ask user
     if not USERNAME:
-        print("[!] Didn't find steam account, please log in")
+        print("[!] No Steam accounts found, please log in manually")
         USERNAME = input("[→] Steam Username: ").strip()
 
     REFRESH_TOKEN = refresh_tokens.get(USERNAME)
-
     webauth, result = WebAuth(), None
     prompt_for_unavailable = True
 
@@ -313,7 +332,7 @@ def steam_login():
 
         result = client.login(USERNAME, PASSWORD, REFRESH_TOKEN)
 
-    # Save refresh token for future use
+    # Save refresh token
     if REFRESH_TOKEN:
         refresh_tokens[USERNAME] = REFRESH_TOKEN
         try:
@@ -384,6 +403,9 @@ def copy_bins_to_steam_stats():
         print(f"\n[✓] Copied {files_copied} files to {DEST_DIR}")
 
 def main():
+    # Clear term from building process
+    os.system('cls||clear')
+
     ensure_directories()
     max_no_schema_in_row = get_maximum_tries()
 
