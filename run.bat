@@ -1,11 +1,7 @@
 @echo off
 
-REM Check if virtual environment exists
-if not exist ".venv" (
-    echo Virtual environment not found. Please run build.bat first.
-    pause
-    exit /b 1
-)
+REM build first
+build.bat
 
 REM Activate virtual environment
 call .venv\Scripts\activate.bat

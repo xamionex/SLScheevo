@@ -1,9 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM Script to create virtual environment and build with PyInstaller
 set SCRIPT_NAME=SLScheevo.py
 set OUTPUT_NAME=SLScheevo.exe
+set VENV_DIR=.venv
 
 echo Setting up build environment...
 
@@ -16,29 +16,20 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Create virtual environment
-echo Creating virtual environment...
-python -m venv .venv
+REM Create virtual environment if it doesnt exist
+if not exist "%VENV_DIR%" (
+    echo Creating virtual environment...
+    python -m venv "%VENV_DIR%"
+)
 
 REM Activate virtual environment
 echo Activating virtual environment...
-call .venv\Scripts\activate.bat
+call "%VENV_DIR%\Scripts\activate.bat"
 
-REM Upgrade pip
-echo Upgrading pip...
-python -m pip install --upgrade pip
-
-REM Install requirements from the provided requirements.txt
-echo Installing requirements...
+REM Upgrade pip and dependencies
+echo Upgrading pip and ensuring requirements are installed...
+python -m pip install --upgrade pip setuptools wheel pyinstaller
 pip install -r requirements.txt
-
-REM Install additional build dependencies if needed
-echo Installing additional build dependencies...
-pip install setuptools wheel
-
-REM Install PyInstaller
-echo Installing PyInstaller...
-pip install pyinstaller
 
 REM Create build directory
 if not exist build mkdir build
@@ -65,18 +56,14 @@ pyinstaller --onefile ^
             --hidden-import=bs4 ^
             "%SCRIPT_NAME%"
 
-REM Check if build was successful
+REM Check build result
 if exist "./build/%OUTPUT_NAME%" (
     echo Build successful! Executable created: ./build/%OUTPUT_NAME%
-    echo You can run it with: .\build\%OUTPUT_NAME%
 ) else (
     echo Build failed!
     pause
     exit /b 1
 )
 
-REM Deactivate virtual environment
-call .venv\Scripts\deactivate.bat
-
+call "%VENV_DIR%\Scripts\deactivate.bat"
 echo Done!
-pause

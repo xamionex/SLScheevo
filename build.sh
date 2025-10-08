@@ -1,40 +1,31 @@
 #!/bin/bash
+set -e
 
-# Script to create virtual environment and build with PyInstaller
 SCRIPT_NAME="SLScheevo.py"
 OUTPUT_NAME="SLScheevo"
+VENV_DIR=".venv"
 
 echo "Setting up build environment..."
 
 # Check if Python 3 is available
-if ! command -v python3 &> /dev/null; then
-    echo "Error: python3 could not be found"
+if ! command -v python3 &>/dev/null; then
+    echo "Error: python3 not found"
     exit 1
 fi
 
-# Create virtual environment
-echo "Creating virtual environment..."
-python3 -m venv .venv
+# Create virtual environment if missing
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Creating virtual environment..."
+    python3 -m venv "$VENV_DIR"
+fi
 
 # Activate virtual environment
-echo "Activating virtual environment..."
-source .venv/bin/activate
+source "$VENV_DIR/bin/activate"
 
-# Upgrade pip
-echo "Upgrading pip..."
-pip install --upgrade pip
-
-# Install requirements from the provided requirements.txt
-echo "Installing requirements..."
+# Always ensure environment is current
+echo "Upgrading pip and ensuring requirements are installed..."
+pip install --upgrade pip setuptools wheel pyinstaller
 pip install -r requirements.txt
-
-# Install additional build dependencies if needed
-echo "Installing additional build dependencies..."
-pip install setuptools wheel
-
-# Install PyInstaller
-echo "Installing PyInstaller..."
-pip install pyinstaller
 
 # Create build directory
 mkdir -p build
@@ -42,35 +33,32 @@ mkdir -p build
 # Build with PyInstaller
 echo "Building executable with PyInstaller..."
 pyinstaller --onefile \
-            --name "$OUTPUT_NAME" \
-            --distpath ./build \
-            --workpath ./build/temp \
-            --specpath ./build \
-            --hidden-import="steam" \
-            --hidden-import="steam.client" \
-            --hidden-import="steam.webauth" \
-            --hidden-import="steam.enums" \
-            --hidden-import="steam.core" \
-            --hidden-import="steam.core.msg" \
-            --hidden-import="steam.enums.common" \
-            --hidden-import="steam.enums.emsg" \
-            --hidden-import="configobj" \
-            --hidden-import="requests" \
-            --hidden-import="certifi" \
-            --hidden-import="beautifulsoup4" \
-            --hidden-import="bs4" \
-            "$SCRIPT_NAME"
+    --name "$OUTPUT_NAME" \
+    --distpath ./build \
+    --workpath ./build/temp \
+    --specpath ./build \
+    --hidden-import="steam" \
+    --hidden-import="steam.client" \
+    --hidden-import="steam.webauth" \
+    --hidden-import="steam.enums" \
+    --hidden-import="steam.core" \
+    --hidden-import="steam.core.msg" \
+    --hidden-import="steam.enums.common" \
+    --hidden-import="steam.enums.emsg" \
+    --hidden-import="configobj" \
+    --hidden-import="requests" \
+    --hidden-import="certifi" \
+    --hidden-import="beautifulsoup4" \
+    --hidden-import="bs4" \
+    "$SCRIPT_NAME"
 
-# Check if build was successful
-if [ -f "./build/$OUTPUT_NAME" ]; then
+# Check build success
+if [ -f "./build/$OUTPUT_NAME" ] || [ -f "./build/$OUTPUT_NAME.exe" ]; then
     echo "Build successful! Executable created: ./build/$OUTPUT_NAME"
-    echo "You can run it with: ./build/$OUTPUT_NAME"
 else
-    echo "Build failed!"
+    read -p "Build failed!"
     exit 1
 fi
 
-# Deactivate virtual environment
 deactivate
-
 echo "Done!"
