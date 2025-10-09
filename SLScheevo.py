@@ -15,6 +15,7 @@ import base64
 import subprocess
 import uuid
 import getpass
+import hashlib
 from pathlib import Path
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
@@ -118,16 +119,19 @@ def derive_key():
     """Derive a Fernet key for encryption"""
     system_user = getpass.getuser()
     hwid = get_hwid()
+
     combined_secret = f"{system_user}:{hwid}"
 
-    salt = fb'steam_stats_salt_{hwid}'
+    salt_prefix = b"steam_stats_salt_"
+    salt = hashlib.sha256(salt_prefix + hwid.encode("utf-8")).digest()  # 32 bytes
+
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
         salt=salt,
-        iterations=100000,
+        iterations=100_000,
     )
-    key = base64.urlsafe_b64encode(kdf.derive(combined_secret.encode()))
+    key = base64.urlsafe_b64encode(kdf.derive(combined_secret.encode("utf-8")))
     return key
 
 def encrypt_refresh_tokens(tokens_dict):
