@@ -2,3 +2,4 @@ steam[client] @ git+https://github.com/detiam/steam_websocket@b8239912e6a190f490
 requests>=2.25.0
 configobj>=5.0.0
 pathlib2>=2.3.0; python_version < "3.4"
+cryptography
