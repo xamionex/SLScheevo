@@ -16,6 +16,7 @@ import subprocess
 import uuid
 import getpass
 import hashlib
+import argparse
 from pathlib import Path
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
@@ -27,6 +28,19 @@ from steam.enums.common import EResult
 from steam.enums.emsg import EMsg
 from steam.webauth import WebAuth
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Exit codes
+EXIT_SUCCESS = 0
+EXIT_GENERAL_ERROR = 1
+EXIT_LOGIN_FAILED = 2
+EXIT_NO_ACCOUNT_ID = 3
+EXIT_NO_APP_IDS = 4
+EXIT_INPUT_REQUIRED = 5
+EXIT_NO_SCHEMA_FOUND = 6
+EXIT_FILE_ERROR = 7
+EXIT_STEAM_NOT_FOUND = 8
+EXIT_TOKEN_ERROR = 9
+EXIT_NO_ACTIONS = 10
 
 # Determine Steam base directory
 if platform.system() == "Windows":
@@ -45,10 +59,9 @@ OUTPUT_DIR = DATA_DIR / "bins"
 SKIP_FILE = DATA_DIR / "skip_generation.txt"
 NO_ACH_FILE = DATA_DIR / "no_achievement_games.txt"
 MAX_TRIES_FILE = DATA_DIR / "maximum_tries.txt"
-REFRESH_TOKENS = DATA_DIR / "refresh_tokens.json"
-ENCRYPTED_REFRESH_TOKENS = DATA_DIR / "refresh_tokens.encrypted"
-VERSION_FILE = DATA_DIR / ".version"
+SAVED_LOGINS_FILE = DATA_DIR / "saved_logins.encrypted"
 TEMPLATE_FILE = DATA_DIR / "UserGameStats_TEMPLATE.bin"
+SILENT_MODE = False
 
 # Steam ids with public profiles that own a lot of games
 TOP_OWNER_IDS = [
@@ -67,23 +80,46 @@ TOP_OWNER_IDS = [
     76561198407953371, 76561198062901118,
 ]
 
-def get_current_version():
-    """Get current version from version file or return default"""
-    if VERSION_FILE.exists():
-        try:
-            with open(VERSION_FILE, 'r') as f:
-                return f.read().strip()
-        except:
-            return "1.0.0"
-    return "1.0.0"
+def parse_steam_id(login_input):
+    """Parse various Steam ID formats and return account_id and steam_id64"""
+    login_input = login_input.strip()
 
-def save_current_version(version):
-    """Save current version to version file"""
-    try:
-        with open(VERSION_FILE, 'w') as f:
-            f.write(version)
-    except Exception as e:
-        print(f"[!] Warning: Could not save version file: {e}")
+    # Account ID (numeric)
+    if login_input.isdigit() and len(login_input) <= 10:
+        account_id = int(login_input)
+        steam_id64 = (account_id | 76561197960265728)  # Convert to SteamID64
+        return str(account_id), str(steam_id64)
+
+    # SteamID64 (17 digits, starts with 7656)
+    if login_input.isdigit() and len(login_input) == 17 and login_input.startswith('7656'):
+        steam_id64 = int(login_input)
+        account_id = steam_id64 - 76561197960265728  # Convert to Account ID
+        return str(account_id), str(steam_id64)
+
+    # Steam2 ID (STEAM_X:Y:Z)
+    if login_input.upper().startswith('STEAM_'):
+        parts = login_input.split(':')
+        if len(parts) >= 3:
+            try:
+                y = int(parts[1])
+                z = int(parts[2])
+                steam_id64 = (z * 2) + 76561197960265728 + y
+                account_id = steam_id64 - 76561197960265728
+                return str(account_id), str(steam_id64)
+            except ValueError:
+                pass
+
+    # Steam3 ID ([U:1:ACCOUNT_ID])
+    if login_input.startswith('[U:1:') and login_input.endswith(']'):
+        try:
+            account_id = int(login_input[5:-1])
+            steam_id64 = account_id + 76561197960265728
+            return str(account_id), str(steam_id64)
+        except ValueError:
+            pass
+
+    # If we can't parse it, assume it's a username
+    return None, None
 
 def get_hwid():
     """Get Hardware ID that works on both Linux and Windows, without fallbacks."""
@@ -134,100 +170,160 @@ def derive_key():
     key = base64.urlsafe_b64encode(kdf.derive(combined_secret.encode("utf-8")))
     return key
 
-def encrypt_refresh_tokens(tokens_dict):
-    """Encrypt refresh tokens"""
+def encrypt_saved_logins(logins_dict):
+    """Encrypt saved logins"""
     try:
         key = derive_key()
         fernet = Fernet(key)
 
         # Convert dict to JSON string and encrypt
-        tokens_json = json.dumps(tokens_dict)
-        encrypted_data = fernet.encrypt(tokens_json.encode())
+        logins_json = json.dumps(logins_dict)
+        encrypted_data = fernet.encrypt(logins_json.encode())
 
         return encrypted_data
     except Exception as e:
-        print(f"[!] Error encrypting tokens: {e}")
+        print(f"[!] Error encrypting logins: {e}")
         return None
 
-def decrypt_refresh_tokens(encrypted_data):
-    """Decrypt refresh tokens"""
+def decrypt_saved_logins(encrypted_data):
+    """Decrypt saved logins"""
     try:
         key = derive_key()
         fernet = Fernet(key)
 
         # Decrypt and parse JSON
         decrypted_data = fernet.decrypt(encrypted_data)
-        tokens_dict = json.loads(decrypted_data.decode())
+        logins_dict = json.loads(decrypted_data.decode())
 
-        return tokens_dict
+        return logins_dict
     except Exception as e:
-        print(f"[!] Error decrypting tokens: {e}")
+        print(f"[!] Error decrypting logins: {e}")
         return {}
 
-def migrate_old_tokens_to_encrypted():
-    """Migrate old plaintext tokens to encrypted format"""
-    if REFRESH_TOKENS.exists():
-        try:
-            with open(REFRESH_TOKENS, 'r') as f:
-                old_tokens = json.load(f)
+def migrate_old_tokens_to_new_format():
+    """Migrate old token files to new saved_logins format"""
+    old_files = [
+        DATA_DIR / "refresh_tokens.encrypted",
+        DATA_DIR / "refresh_tokens.json"
+    ]
 
-            if old_tokens:
-                print("[→] Migrating old tokens to encrypted format...")
-                encrypted_data = encrypt_refresh_tokens(old_tokens)
-                if encrypted_data:
-                    with open(ENCRYPTED_REFRESH_TOKENS, 'wb') as f:
-                        f.write(encrypted_data)
-                    # Delete the old JSON file instead of backing it up
-                    REFRESH_TOKENS.unlink()
-                    print("[✓] Migrated old tokens to encrypted format and deleted old file")
-                    return True
-        except Exception as e:
-            print(f"[!] Error migrating old tokens: {e}")
+    migrated = False
+    new_logins = {}
 
-    return False
+    for old_file in old_files:
+        if old_file.exists():
+            try:
+                if old_file.suffix == ".encrypted":
+                    # Try to decrypt old format
+                    with open(old_file, 'rb') as f:
+                        encrypted_data = f.read()
 
-def load_refresh_tokens():
-    """Load refresh tokens, handling migration from old format if needed"""
-    current_version = get_current_version()
+                    # Use old derive_key function (same as before)
+                    key = derive_key()
+                    fernet = Fernet(key)
+                    decrypted_data = fernet.decrypt(encrypted_data)
+                    old_tokens = json.loads(decrypted_data.decode())
 
-    # If version file doesn't exist, we need to migrate
-    if not VERSION_FILE.exists():
-        print("[→] Version file not found, checking for token migration...")
-        if REFRESH_TOKENS.exists():
-            if migrate_old_tokens_to_encrypted():
-                save_current_version("1.0.0")
+                    # Convert to new format
+                    for username, refresh_token in old_tokens.items():
+                        account_id, steam_id64 = parse_steam_id(username)
+                        if account_id and steam_id64:
+                            new_logins[steam_id64] = {
+                                "username": username,
+                                "refresh_token": refresh_token,
+                                "account_id": account_id,
+                                "steam_id64": steam_id64
+                            }
+                        else:
+                            # If we can't parse as ID, keep as username
+                            new_logins[username] = {
+                                "username": username,
+                                "refresh_token": refresh_token,
+                                "account_id": None,
+                                "steam_id64": None
+                            }
+
+                elif old_file.suffix == ".json":
+                    # Plaintext JSON
+                    with open(old_file, 'r') as f:
+                        old_tokens = json.load(f)
+
+                    # Convert to new format
+                    for username, refresh_token in old_tokens.items():
+                        account_id, steam_id64 = parse_steam_id(username)
+                        if account_id and steam_id64:
+                            new_logins[steam_id64] = {
+                                "username": username,
+                                "refresh_token": refresh_token,
+                                "account_id": account_id,
+                                "steam_id64": steam_id64
+                            }
+                        else:
+                            # If we can't parse as ID, keep as username
+                            new_logins[username] = {
+                                "username": username,
+                                "refresh_token": refresh_token,
+                                "account_id": None,
+                                "steam_id64": None
+                            }
+
+                # Delete old file after migration
+                old_file.unlink()
+                migrated = True
+                print(f"[→] Migrated {old_file} to new format")
+
+            except Exception as e:
+                print(f"[!] Error migrating {old_file}: {e}")
+
+    # Save migrated data
+    if migrated and new_logins:
+        if save_saved_logins(new_logins):
+            print("[✓] Successfully migrated old tokens to saved_logins.encrypted")
         else:
-            save_current_version("1.0.0")
+            print("[!] Failed to save migrated tokens")
 
-    # Load from encrypted file if it exists
-    if ENCRYPTED_REFRESH_TOKENS.exists():
+    return migrated
+
+def load_saved_logins():
+    """Load saved logins, handling migration from old format if needed"""
+    # Check if migration is needed
+    old_files_exist = any([
+        (DATA_DIR / "refresh_tokens.encrypted").exists(),
+        (DATA_DIR / "refresh_tokens.json").exists()
+    ])
+
+    if old_files_exist:
+        migrate_old_tokens_to_new_format()
+
+    # Load from new encrypted file
+    if SAVED_LOGINS_FILE.exists():
         try:
-            with open(ENCRYPTED_REFRESH_TOKENS, 'rb') as f:
+            with open(SAVED_LOGINS_FILE, 'rb') as f:
                 encrypted_data = f.read()
 
             # Try to decrypt
-            tokens = decrypt_refresh_tokens(encrypted_data)
-            if tokens:
-                return tokens
+            logins = decrypt_saved_logins(encrypted_data)
+            if logins:
+                return logins
             else:
-                print("[!] Failed to decrypt tokens with current system")
+                print("[!] Failed to decrypt logins with current system")
                 print("[!] This might happen if you changed hardware or system user")
 
         except Exception as e:
-            print(f"[!] Error loading encrypted tokens: {e}")
+            print(f"[!] Error loading encrypted logins: {e}")
 
     return {}
 
-def save_refresh_tokens(tokens_dict):
-    """Save refresh tokens in encrypted format"""
-    encrypted_data = encrypt_refresh_tokens(tokens_dict)
+def save_saved_logins(logins_dict):
+    """Save logins in encrypted format"""
+    encrypted_data = encrypt_saved_logins(logins_dict)
     if encrypted_data:
         try:
-            with open(ENCRYPTED_REFRESH_TOKENS, 'wb') as f:
+            with open(SAVED_LOGINS_FILE, 'wb') as f:
                 f.write(encrypted_data)
             return True
         except Exception as e:
-            print(f"[!] Error saving encrypted tokens: {e}")
+            print(f"[!] Error saving encrypted logins: {e}")
     return False
 
 def ensure_directories():
@@ -287,7 +383,7 @@ def parse_libraryfolders_vdf():
     """Parse libraryfolders.vdf to extract app IDs"""
     if not LIBRARY_FILE.exists():
         print(f"[✗] Steam library file not found at {LIBRARY_FILE}")
-        sys.exit(1)
+        sys.exit(EXIT_STEAM_NOT_FOUND)
 
     print(f"[→] Reading Steam library from: {LIBRARY_FILE}")
 
@@ -378,6 +474,8 @@ def generate_stats_schema_bin(game_id, account_id, max_no_schema_in_row, client=
         if no_schema_count >= max_no_schema_in_row:
             sys.stdout.write(f"\r[✗] No schema available for game {game_id} ({max_no_schema_in_row} consecutive 'no schema' responses)\n")
             sys.stdout.flush()
+            if SILENT_MODE:
+                sys.exit(EXIT_NO_SCHEMA_FOUND)
         else:
             sys.stdout.write(f"\r[✗] No schema found for game {game_id} after checking {total_owners} owners\n")
             sys.stdout.flush()
@@ -399,6 +497,8 @@ def generate_stats_schema_bin(game_id, account_id, max_no_schema_in_row, client=
         print(f"[✗] Error writing schema files: {e}")
         if should_logout:
             client.logout()
+        if SILENT_MODE:
+            sys.exit(EXIT_FILE_ERROR)
         return False
 
     if should_logout:
@@ -431,15 +531,11 @@ def get_available_accounts():
     vdf_accounts = parse_loginusers_vdf()
     accounts.extend(vdf_accounts)
 
-    # Get accounts from old plaintext tokens
-    if REFRESH_TOKENS.exists():
-        try:
-            with open(REFRESH_TOKENS, 'r') as f:
-                old_tokens = json.load(f)
-                if isinstance(old_tokens, dict):
-                    accounts.extend(old_tokens.keys())
-        except:
-            pass
+    # Get accounts from saved logins
+    saved_logins = load_saved_logins()
+    for login_data in saved_logins.values():
+        if "username" in login_data and login_data["username"] not in accounts:
+            accounts.append(login_data["username"])
 
     # Remove duplicates while preserving order
     seen = set()
@@ -451,37 +547,70 @@ def get_available_accounts():
 
     return unique_accounts
 
-def steam_login():
-    """Login to Steam using encrypted refresh tokens or interactive login"""
+def steam_login(login_input=None):
+    """Login to Steam using saved logins or interactive login"""
     client = SteamClient()
 
     # Try environment variables first
     USERNAME = os.environ.get('USERNAME', '')
     PASSWORD = os.environ.get('PASSWORD', '')
 
-    # Get available accounts for selection
-    available_accounts = get_available_accounts()
+    # Parse login input if provided
+    target_username = None
+    target_account_id = None
+    target_steam_id64 = None
 
-    # If no username from environment, let user choose
-    if not USERNAME and available_accounts:
-        print("[→] Available accounts:")
-        for i, user in enumerate(available_accounts, 1):
-            print(f"[{i}]: {user}")
-        try:
-            num = int(input("[→] Choose an account to login (0 for new account): "))
-            if 0 < num <= len(available_accounts):
-                USERNAME = available_accounts[num - 1]
-        except ValueError:
-            pass
+    if login_input:
+        target_account_id, target_steam_id64 = parse_steam_id(login_input)
+        if not target_account_id:
+            # If we can't parse as ID, assume it's a username
+            target_username = login_input
 
-    # Still no username? ask user
+    # Load saved logins
+    saved_logins = load_saved_logins()
+
+    # Find matching login
+    REFRESH_TOKEN = None
+    if target_steam_id64 and target_steam_id64 in saved_logins:
+        login_data = saved_logins[target_steam_id64]
+        USERNAME = login_data.get("username", "")
+        REFRESH_TOKEN = login_data.get("refresh_token")
+    elif target_username and target_username in saved_logins:
+        login_data = saved_logins[target_username]
+        USERNAME = login_data.get("username", "")
+        REFRESH_TOKEN = login_data.get("refresh_token")
+    elif target_steam_id64 or target_username:
+        # We have a target but no saved login
+        USERNAME = target_username or target_steam_id64 or ""
+
+    # If no username from environment or target, let user choose
+    if not USERNAME and not SILENT_MODE:
+        available_accounts = get_available_accounts()
+        if available_accounts:
+            print("[→] Available accounts:")
+            for i, user in enumerate(available_accounts, 1):
+                print(f"[{i}]: {user}")
+            try:
+                num = int(input("[→] Choose an account to login (0 for new account): "))
+                if 0 < num <= len(available_accounts):
+                    USERNAME = available_accounts[num - 1]
+            except ValueError:
+                pass
+
+    # Still no username? ask user (unless silent mode)
     if not USERNAME:
+        if SILENT_MODE:
+            print("[✗] No username provided and silent mode enabled")
+            sys.exit(EXIT_INPUT_REQUIRED)
         print("[!] No Steam accounts found, please log in manually")
         USERNAME = input("[→] Steam Username: ").strip()
 
-    # NOW we can load tokens for all accounts (system-wide encryption)
-    refresh_tokens = load_refresh_tokens()
-    REFRESH_TOKEN = refresh_tokens.get(USERNAME)
+    # Try to get refresh token from saved logins if not already found
+    if not REFRESH_TOKEN:
+        for login_data in saved_logins.values():
+            if login_data.get("username") == USERNAME:
+                REFRESH_TOKEN = login_data.get("refresh_token")
+                break
 
     webauth, result = WebAuth(), None
     prompt_for_unavailable = True
@@ -492,6 +621,10 @@ def steam_login():
 
         if result in (EResult.TryAnotherCM, EResult.ServiceUnavailable):
             if prompt_for_unavailable and result == EResult.ServiceUnavailable:
+                if SILENT_MODE:
+                    client.logout()
+                    sys.exit(EXIT_LOGIN_FAILED)
+
                 while True:
                     answer = input("[!] Steam is down. Keep retrying? [y/n]: ").lower()
                     if answer in 'yn':
@@ -504,17 +637,22 @@ def steam_login():
             client.reconnect(maxdelay=15)
         elif result == EResult.InvalidPassword:
             print("[✗] Invalid password or refresh_token.")
-            print(f"[!] Correct the password or delete '{ENCRYPTED_REFRESH_TOKENS}' and try again.")
-            return None
+            print(f"[!] Correct the password or delete '{SAVED_LOGINS_FILE}' and try again.")
+            client.logout()
+            sys.exit(EXIT_LOGIN_FAILED)
 
         if not REFRESH_TOKEN:
             try:
                 if not PASSWORD:
+                    if SILENT_MODE:
+                        client.logout()
+                        sys.exit(EXIT_INPUT_REQUIRED)
                     PASSWORD = input("[→] Steam Password: ").strip()
                 webauth.cli_login(USERNAME, PASSWORD)
             except Exception as e:
                 print(f'[✗] Login failed: {e}')
-                return None
+                client.logout()
+                sys.exit(EXIT_LOGIN_FAILED)
 
             USERNAME, PASSWORD = webauth.username, webauth.password
             REFRESH_TOKEN = webauth.refresh_token
@@ -523,8 +661,20 @@ def steam_login():
 
     # Save refresh token (encrypted)
     if REFRESH_TOKEN:
-        refresh_tokens[USERNAME] = REFRESH_TOKEN
-        if save_refresh_tokens(refresh_tokens):
+        # Get account info from logged-in client
+        account_id = get_account_id(client)
+        steam_id64 = get_steam_id64(client)
+
+        login_key = steam_id64 or USERNAME
+
+        saved_logins[login_key] = {
+            "username": USERNAME,
+            "refresh_token": REFRESH_TOKEN,
+            "account_id": account_id,
+            "steam_id64": steam_id64
+        }
+
+        if save_saved_logins(saved_logins):
             print(f"[✓] Saved encrypted login token for {USERNAME}")
         else:
             print(f"[✗] Could not save encrypted login token for {USERNAME}")
@@ -540,7 +690,8 @@ def steam_login():
         return client
     else:
         print(f"[✗] Steam login failed: {result.name}")
-        return None
+        client.logout()
+        sys.exit(EXIT_LOGIN_FAILED)
 
 def copy_bins_to_steam_stats():
     """
@@ -548,7 +699,6 @@ def copy_bins_to_steam_stats():
     for the given Steam ID64.
     """
     # Destination stats folder per user
-    # dest_dir = steam_dir / "userdata" / steam_id64 / "config" / "stats"
     DEST_DIR.mkdir(parents=True, exist_ok=True)
 
     if not OUTPUT_DIR.exists():
@@ -573,6 +723,8 @@ def copy_bins_to_steam_stats():
                 print(f"[✓] Overwrote Schema File: {file_path} -> {dest_path}")
             except Exception as e:
                 print(f"[✗] Failed to copy schema {file_path} -> {dest_path}: {e}")
+                if SILENT_MODE:
+                    sys.exit(EXIT_FILE_ERROR)
 
         # User stats files: only copy if not already present
         elif file_path.name.startswith("UserGameStats_"):
@@ -585,17 +737,22 @@ def copy_bins_to_steam_stats():
                 print(f"[✓] Copied Stats File: {file_path} -> {dest_path}")
             except Exception as e:
                 print(f"[✗] Failed to copy stats {file_path} -> {dest_path}: {e}")
+                if SILENT_MODE:
+                    sys.exit(EXIT_FILE_ERROR)
 
     if files_copied > 0:
         print(f"\n[✓] Copied {files_copied} files to {DEST_DIR}")
 
 def prompt_security_warning():
     """Prompt user about security and ask if they want to delete the encrypted tokens"""
+    if SILENT_MODE:
+        return
+
     print(f"\n{'='*80}")
     print(f"SLScheevo Security Notice")
     print(f"{'='*80}")
     print(f"Your Steam login tokens have been saved in an encrypted file:")
-    print(f"{ENCRYPTED_REFRESH_TOKENS}")
+    print(f"{SAVED_LOGINS_FILE}")
     print(f"{'='*80}")
     print(f"[!]  SECURITY WARNING:")
     print(f"While encrypted, this file still contains sensitive information.")
@@ -606,8 +763,8 @@ def prompt_security_warning():
     try:
         response = input("\nDo you want to delete the encrypted tokens file now? (y/N): ").strip().lower()
         if response in ['y', 'yes']:
-            if ENCRYPTED_REFRESH_TOKENS.exists():
-                ENCRYPTED_REFRESH_TOKENS.unlink()
+            if SAVED_LOGINS_FILE.exists():
+                SAVED_LOGINS_FILE.unlink()
                 print("[✓] Encrypted tokens file deleted.")
             else:
                 print("[!] File already deleted or doesn't exist.")
@@ -616,40 +773,72 @@ def prompt_security_warning():
     except (KeyboardInterrupt, EOFError):
         print("\n[→] File kept. Remember to delete it manually if needed.")
 
+def parse_app_ids(appid_input):
+    """Parse comma-separated app IDs string into list of integers"""
+    if not appid_input:
+        return []
+
+    app_ids = []
+    for part in appid_input.split(','):
+        part = part.strip()
+        if part.isdigit():
+            app_ids.append(int(part))
+
+    return app_ids
+
 def main():
-    # Clear term from building process
+    global SILENT_MODE
+
+    parser = argparse.ArgumentParser(description='SLScheevo - Steam Stats Schema Generator')
+    parser.add_argument('--login', type=str, help='Login using AccountID, SteamID, Steam2 ID, Steam3 ID, or username')
+    parser.add_argument('--silent', action='store_true', help='Silent mode - no input prompts, exit with status codes')
+    parser.add_argument('--appid', type=str, help='Comma-separated list of app IDs to generate schemas for')
+
+    args = parser.parse_args()
+
+    SILENT_MODE = args.silent
+
     os.system('cls||clear')
 
     ensure_directories()
     max_no_schema_in_row = get_maximum_tries()
 
     # Login first to get client
-    client = steam_login()
+    client = steam_login(args.login)
     if not client:
         print("[✗] Failed to login to Steam")
-        sys.exit(1)
+        sys.exit(EXIT_LOGIN_FAILED)
 
     # Get account ID from logged-in client (no file dependency)
     account_id = get_account_id(client)
     if not account_id:
         print("[✗] Could not retrieve account ID")
         client.logout()
-        sys.exit(1)
+        sys.exit(EXIT_NO_ACCOUNT_ID)
 
     # Get account ID64 from logged-in client (no file dependency)
     steam_id64 = get_steam_id64(client)
     if not steam_id64:
         print("[✗] Could not retrieve account ID64")
         client.logout()
-        sys.exit(1)
+        sys.exit(EXIT_NO_ACCOUNT_ID)
 
-    # Parse Steam library
-    all_app_ids = parse_libraryfolders_vdf()
-    if not all_app_ids:
-        print("[✗] No app IDs found in library file.")
-        sys.exit(1)
-
-    print(f"[✓] Found {len(all_app_ids)} games in library")
+    # Parse app IDs from command line or library
+    if args.appid:
+        app_ids = parse_app_ids(args.appid)
+        if not app_ids:
+            print("[✗] No valid app IDs provided with --appid")
+            client.logout()
+            sys.exit(EXIT_NO_APP_IDS)
+        print(f"[→] Using {len(app_ids)} app IDs from command line: {app_ids}")
+    else:
+        # Parse Steam library
+        app_ids = parse_libraryfolders_vdf()
+        if not app_ids:
+            print("[✗] No app IDs found in library file.")
+            client.logout()
+            sys.exit(EXIT_NO_APP_IDS)
+        print(f"[✓] Found {len(app_ids)} games in library")
 
     # Read tracking files
     skip_generation = read_tracking_file(SKIP_FILE)
@@ -657,7 +846,7 @@ def main():
 
     # Find missing app IDs
     missing_app_ids = []
-    for app_id in all_app_ids:
+    for app_id in app_ids:
         if app_id in no_achievements:
             continue  # doesn't have achievements
         if app_id in skip_generation:
@@ -671,34 +860,36 @@ def main():
         missing_app_ids.append(app_id)
 
     if not missing_app_ids:
-        print("[!] All games already have stats schema files or are skipped. Nothing to do.")
+        print("[!] No missing stats files to generate")
         client.logout()
+        copy_bins_to_steam_stats()
         prompt_security_warning()
-        return
+        sys.exit(EXIT_NO_ACTIONS)
 
-    print(f"[✓] Found {len(missing_app_ids)} games missing stats schema files")
-    print(f"[!] Missing app IDs: {missing_app_ids}")
+    print(f"[→] Generating stats for {len(missing_app_ids)} missing games")
 
-    # Generate stats schema for each missing app ID
-    successful_generations = 0
-    for app_id in missing_app_ids:
+    # Generate missing stats
+    success_count = 0
+    failed_count = 0
+
+    for i, app_id in enumerate(missing_app_ids, 1):
+        print(f"\n[→] Progress: {i}/{len(missing_app_ids)}")
+
         if generate_stats_schema_bin(app_id, account_id, max_no_schema_in_row, client):
-            successful_generations += 1
-            print(f"[✓] Successfully generated stats schema for appid {app_id}")
+            success_count += 1
         else:
-            # Mark as skipped
-            with open(SKIP_FILE, 'a') as f:
-                f.write(f"{app_id}\n")
-            print(f"[✗] Added {app_id} to skip_generation.txt")
+            failed_count += 1
 
-    copy_bins_to_steam_stats()
+    print(f"\n[✓] Generation complete: {success_count} succeeded, {failed_count} failed")
 
-    # Cleanup
     client.logout()
 
-    print(f"\n[✓] Done! Generated stats schema files for {successful_generations} out of {len(missing_app_ids)} games.")
+    # Copy generated files to Steam directory
+    copy_bins_to_steam_stats()
 
     prompt_security_warning()
+
+    sys.exit(EXIT_SUCCESS)
 
 if __name__ == "__main__":
     main()
