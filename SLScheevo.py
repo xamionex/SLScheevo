@@ -49,7 +49,7 @@ if platform.system() == "Windows":
 else:
     STEAM_DIR = Path.home() / ".local/share/Steam"
 
-LIBRARY_FILE = STEAM_DIR / "steamapps/libraryfolders.vdf"
+LIBRARY_FILE = STEAM_DIR / "config/libraryfolders.vdf"
 LOGIN_FILE = STEAM_DIR / "config/loginusers.vdf"
 DEST_DIR = STEAM_DIR / "appcache/stats"
 
