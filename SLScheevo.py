@@ -42,17 +42,6 @@ EXIT_STEAM_NOT_FOUND = 8
 EXIT_TOKEN_ERROR = 9
 EXIT_NO_ACTIONS = 10
 
-# Determine Steam base directory
-if platform.system() == "Windows":
-    # Default Windows install path
-    STEAM_DIR = Path("C:/Program Files (x86)/Steam")
-else:
-    STEAM_DIR = Path.home() / ".local/share/Steam"
-
-LIBRARY_FILE = STEAM_DIR / "config/libraryfolders.vdf"
-LOGIN_FILE = STEAM_DIR / "config/loginusers.vdf"
-DEST_DIR = STEAM_DIR / "appcache/stats"
-
 # Data
 DATA_DIR = Path("data")
 OUTPUT_DIR = DATA_DIR / "bins"
@@ -62,6 +51,51 @@ MAX_TRIES_FILE = DATA_DIR / "maximum_tries.txt"
 SAVED_LOGINS_FILE = DATA_DIR / "saved_logins.encrypted"
 TEMPLATE_FILE = DATA_DIR / "UserGameStats_TEMPLATE.bin"
 SILENT_MODE = False
+
+# Steam Path Vars
+STEAM_DIR = None
+LIBRARY_FILE = None
+LOGIN_FILE = None
+DEST_DIR = None
+
+def determine_steam_directory():
+    global STEAM_DIR, LIBRARY_FILE, LOGIN_FILE, DEST_DIR
+
+    if platform.system() == "Windows":
+        STEAM_DIR = Path("C:/Program Files (x86)/Steam")
+    else:
+        native_path = Path.home() / ".local/share/Steam"
+        flatpak_path = Path.home() / ".var/app/com.valvesoftware.Steam/.local/share/Steam"
+
+        native_exists = native_path.exists()
+        flatpak_exists = flatpak_path.exists()
+
+        if native_exists and flatpak_exists:
+            if SILENT_MODE:
+                STEAM_DIR = native_path
+            else:
+                print("Found both native and Flatpak Steam installations:")
+                print(f"[1] Native: {native_path}")
+                print(f"[2] Flatpak: {flatpak_path}")
+                while True:
+                    choice = int(input("Which one to use? (1/2): "))
+                    if choice == 1:
+                        STEAM_DIR = native_path
+                        break
+                    elif choice == 2:
+                        STEAM_DIR = flatpak_path
+                        break
+                    else:
+                        print("Invalid input, please enter 1 or 2.")
+        elif native_exists:
+            STEAM_DIR = native_path
+        else:
+            STEAM_DIR = flatpak_path
+
+    # Set the dependent paths
+    LIBRARY_FILE = STEAM_DIR / "config/libraryfolders.vdf"
+    LOGIN_FILE = STEAM_DIR / "config/loginusers.vdf"
+    DEST_DIR = STEAM_DIR / "appcache/stats"
 
 # Steam ids with public profiles that own a lot of games
 TOP_OWNER_IDS = [
@@ -752,16 +786,14 @@ def prompt_security_warning():
     print(f"SLScheevo Security Notice")
     print(f"{'='*80}")
     print(f"Your Steam login tokens have been saved in an encrypted file:")
-    print(f"{SAVED_LOGINS_FILE}")
-    print(f"{'='*80}")
-    print(f"[!]  SECURITY WARNING:")
+    print(f"{os.path.abspath(SAVED_LOGINS_FILE)}")
     print(f"While encrypted, this file still contains sensitive information.")
-    print(f"If you don't plan to use SLScheevo for a while, it's recommended")
-    print(f"to delete this file for security.")
+    print(f"If you don't plan to use SLScheevo for a while then please delete this file")
     print(f"{'='*80}")
 
     try:
-        response = input("\nDo you want to delete the encrypted tokens file now? (y/N): ").strip().lower()
+        response = input("\nDo you want to delete the encrypted tokens file now? (y/n): ").strip().lower()
+        print("")
         if response in ['y', 'yes']:
             if SAVED_LOGINS_FILE.exists():
                 SAVED_LOGINS_FILE.unlink()
@@ -800,6 +832,7 @@ def main():
 
     os.system('cls||clear')
 
+    determine_steam_directory()
     ensure_directories()
     max_no_schema_in_row = get_maximum_tries()
 
