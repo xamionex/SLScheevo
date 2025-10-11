@@ -37,19 +37,6 @@ pyinstaller --onefile \
     --distpath ./build \
     --workpath ./build/temp \
     --specpath ./build \
-    --hidden-import="steam" \
-    --hidden-import="steam.client" \
-    --hidden-import="steam.webauth" \
-    --hidden-import="steam.enums" \
-    --hidden-import="steam.core" \
-    --hidden-import="steam.core.msg" \
-    --hidden-import="steam.enums.common" \
-    --hidden-import="steam.enums.emsg" \
-    --hidden-import="configobj" \
-    --hidden-import="requests" \
-    --hidden-import="certifi" \
-    --hidden-import="beautifulsoup4" \
-    --hidden-import="bs4" \
     "$SCRIPT_NAME"
 
 # Check build success
