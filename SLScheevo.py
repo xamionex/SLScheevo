@@ -41,6 +41,9 @@ EXIT_FILE_ERROR = 7
 EXIT_STEAM_NOT_FOUND = 8
 EXIT_TOKEN_ERROR = 9
 EXIT_NO_ACTIONS = 10
+EXIT_NOT_SUPPORTED = 11
+EXIT_FAILED_TO_GET_HWID = 12
+EXIT_NO_ACCOUNT_SPECIFIED = 13
 
 # Data
 DATA_DIR = Path("data")
@@ -51,6 +54,7 @@ MAX_TRIES_FILE = DATA_DIR / "maximum_tries.txt"
 SAVED_LOGINS_FILE = DATA_DIR / "saved_logins.encrypted"
 TEMPLATE_FILE = DATA_DIR / "UserGameStats_TEMPLATE.bin"
 SILENT_MODE = False
+VERBOSE = False
 
 # Steam Path Vars
 STEAM_DIR = None
@@ -171,7 +175,8 @@ def get_hwid():
         if len(lines) > 1 and lines[1]:
             return lines[1]
         else:
-            raise RuntimeError("Failed to retrieve disk serial number on Windows.")
+            print("Failed to retrieve disk serial number on Windows.")
+            sys.exit(EXIT_FAILED_TO_GET_HWID)
 
     elif system == "Linux":
         # Linux: Try machine-id first
@@ -180,10 +185,12 @@ def get_hwid():
             if machine_id:
                 return machine_id
             else:
-                raise RuntimeError("Machine ID file is empty.")
+                print("Machine ID file is empty.")
+                sys.exit(EXIT_FAILED_TO_GET_HWID)
 
     else:
-        raise RuntimeError(f"Unsupported platform: {system}")
+        print(f"Unsupported platform: {system}")
+        sys.exit(EXIT_NOT_SUPPORTED)
 
 def derive_key():
     """Derive a Fernet key for encryption"""
@@ -358,6 +365,7 @@ def save_saved_logins(logins_dict):
             return True
         except Exception as e:
             print(f"[!] Error saving encrypted logins: {e}")
+            sys.exit(EXIT_TOKEN_ERROR)
     return False
 
 def ensure_directories():
@@ -508,7 +516,7 @@ def generate_stats_schema_bin(game_id, account_id, max_no_schema_in_row, client=
         if no_schema_count >= max_no_schema_in_row:
             sys.stdout.write(f"\r[✗] No schema available for game {game_id} ({max_no_schema_in_row} consecutive 'no schema' responses)\n")
             sys.stdout.flush()
-            if SILENT_MODE:
+            if SILENT_MODE and VERBOSE:
                 sys.exit(EXIT_NO_SCHEMA_FOUND)
         else:
             sys.stdout.write(f"\r[✗] No schema found for game {game_id} after checking {total_owners} owners\n")
@@ -634,8 +642,8 @@ def steam_login(login_input=None):
     # Still no username? ask user (unless silent mode)
     if not USERNAME:
         if SILENT_MODE:
-            print("[✗] No username provided and silent mode enabled")
-            sys.exit(EXIT_INPUT_REQUIRED)
+            print("[✗] No username provided, please select a user with --login. Read more with --help")
+            sys.exit(EXIT_NO_ACCOUNT_SPECIFIED)
         print("[!] No Steam accounts found, please log in manually")
         USERNAME = input("[→] Steam Username: ").strip()
 
@@ -820,15 +828,18 @@ def parse_app_ids(appid_input):
 
 def main():
     global SILENT_MODE
+    global VERBOSE
 
     parser = argparse.ArgumentParser(description='SLScheevo - Steam Stats Schema Generator')
     parser.add_argument('--login', type=str, help='Login using AccountID, SteamID, Steam2 ID, Steam3 ID, or username')
     parser.add_argument('--silent', action='store_true', help='Silent mode - no input prompts, exit with status codes')
+    parser.add_argument('--verbose', action='store_true', help='Exits on non-critical statuses like no schemas for appid and such')
     parser.add_argument('--appid', type=str, help='Comma-separated list of app IDs to generate schemas for')
 
     args = parser.parse_args()
 
     SILENT_MODE = args.silent
+    VERBOSE = args.verbose
 
     os.system('cls||clear')
 
