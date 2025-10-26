@@ -44,6 +44,7 @@ EXIT_NO_ACTIONS = 10
 EXIT_NOT_SUPPORTED = 11
 EXIT_FAILED_TO_GET_HWID = 12
 EXIT_NO_ACCOUNT_SPECIFIED = 13
+EXIT_FAILED_TO_PARSE_ID = 14
 
 # Data
 DATA_DIR = Path("data")
@@ -118,46 +119,65 @@ TOP_OWNER_IDS = [
     76561198407953371, 76561198062901118,
 ]
 
-def parse_steam_id(login_input):
-    """Parse various Steam ID formats and return account_id and steam_id64"""
-    login_input = login_input.strip()
+STEAMID64_BASE = 76561197960265728  # Valve's base offset for public Steam64 IDs
 
-    # Account ID (numeric)
-    if login_input.isdigit() and len(login_input) <= 10:
-        account_id = int(login_input)
-        steam_id64 = (account_id | 76561197960265728)  # Convert to SteamID64
-        return str(account_id), str(steam_id64)
+def steamid64_from_account_id(account_id: int) -> int:
+    """Convert AccountID (32-bit) to public SteamID64"""
+    return STEAMID64_BASE + account_id
 
-    # SteamID64 (17 digits, starts with 7656)
-    if login_input.isdigit() and len(login_input) == 17 and login_input.startswith('7656'):
-        steam_id64 = int(login_input)
-        account_id = steam_id64 - 76561197960265728  # Convert to Account ID
-        return str(account_id), str(steam_id64)
+def account_id_from_steamid64(steamid64: int) -> int:
+    """Extract 32-bit AccountID from public Steam64"""
+    return steamid64 - STEAMID64_BASE
 
-    # Steam2 ID (STEAM_X:Y:Z)
-    if login_input.upper().startswith('STEAM_'):
-        parts = login_input.split(':')
-        if len(parts) >= 3:
-            try:
-                y = int(parts[1])
-                z = int(parts[2])
-                steam_id64 = (z * 2) + 76561197960265728 + y
-                account_id = steam_id64 - 76561197960265728
-                return str(account_id), str(steam_id64)
-            except ValueError:
-                pass
+def parse_steam_id(identifier: str):
+    identifier = identifier.strip()
+    account_id = None
+    steam_id64 = None
 
-    # Steam3 ID ([U:1:ACCOUNT_ID])
-    if login_input.startswith('[U:1:') and login_input.endswith(']'):
+    # Steam2 ID: STEAM_X:Y:Z
+    if identifier.upper().startswith('STEAM_'):
         try:
-            account_id = int(login_input[5:-1])
-            steam_id64 = account_id + 76561197960265728
-            return str(account_id), str(steam_id64)
-        except ValueError:
-            pass
+            steam_prefix, y, z = identifier.split(':')
+            universe = int(steam_prefix.split('_')[1])
+            y = int(y)
+            z = int(z)
+            account_id = (z << 1) | y
+            steam_id64 = steamid64_from_account_id(account_id)
+        except Exception as e:
+            print(f"[✗] Failed to parse Steam2 ID ({identifier}): {e}")
+            sys.exit(EXIT_FAILED_TO_PARSE_ID)
 
-    # If we can't parse it, assume it's a username
-    return None, None
+    # Steam3 ID: [U:1:ACCOUNT_ID]
+    elif identifier.startswith('[U:') and identifier.endswith(']'):
+        try:
+            parts = identifier[1:-1].split(':')
+            account_id = int(parts[-1])
+            steam_id64 = steamid64_from_account_id(account_id)
+        except Exception as e:
+            print(f"[✗] Failed to parse Steam3 ID ({identifier}): {e}")
+            sys.exit(EXIT_FAILED_TO_PARSE_ID)
+
+    # Pure numeric input
+    elif identifier.isdigit():
+        num = int(identifier)
+        try:
+            if num >= 76561197960265728:  # Steam64 (public)
+                account_id = account_id_from_steamid64(num)
+                steam_id64 = num
+            elif num <= 4294967295:  # 32-bit AccountID
+                account_id = num
+                steam_id64 = steamid64_from_account_id(num)
+            else:
+                sys.exit(EXIT_FAILED_TO_PARSE_ID)
+                print(f"[✗] Invalid numeric Steam ID range: {num}")
+        except Exception as e:
+            sys.exit(EXIT_FAILED_TO_PARSE_ID)
+            print(f"[✗] Failed to parse numeric ID ({identifier}): {e}")
+
+    return (
+        str(account_id) if account_id is not None else None,
+        str(steam_id64) if steam_id64 is not None else None
+    )
 
 def get_hwid():
     """Get Hardware ID that works on both Linux and Windows, without fallbacks."""
@@ -701,13 +721,12 @@ def steam_login(login_input=None):
 
         result = client.login(USERNAME, PASSWORD, REFRESH_TOKEN)
 
+    steam_id64 = client.steam_id.as_64
+    account_id = client.steam_id.account_id
+
     # Save refresh token (encrypted)
     if REFRESH_TOKEN:
-        # Get account info from logged-in client
-        account_id = get_account_id(client)
-        steam_id64 = get_steam_id64(client)
-
-        login_key = steam_id64 or USERNAME
+        login_key = steam_id64
 
         saved_logins[login_key] = {
             "username": USERNAME,
@@ -724,12 +743,10 @@ def steam_login(login_input=None):
     if result == EResult.OK:
         print("[✓] Logged into Steam successfully")
         # Add our own account ID to the top of the owner list
-        if client.steam_id:
-            steam_id64 = client.steam_id.as_64
-            if steam_id64 not in TOP_OWNER_IDS:
-                TOP_OWNER_IDS.insert(0, steam_id64)
-                print(f"[→] Added your account ({steam_id64}) to owner list")
-        return client
+        if steam_id64 not in TOP_OWNER_IDS:
+            TOP_OWNER_IDS.insert(0, steam_id64)
+            print(f"[→] Added your account ({steam_id64}) to owner list")
+        return client, steam_id64, account_id
     else:
         print(f"[✗] Steam login failed: {result.name}")
         client.logout()
@@ -848,24 +865,23 @@ def main():
     max_no_schema_in_row = get_maximum_tries()
 
     # Login first to get client
-    client = steam_login(args.login)
+    client, steam_id64, account_id = steam_login(args.login)
     if not client:
         print("[✗] Failed to login to Steam")
         sys.exit(EXIT_LOGIN_FAILED)
 
-    # Get account ID from logged-in client (no file dependency)
-    account_id = get_account_id(client)
     if not account_id:
         print("[✗] Could not retrieve account ID")
         client.logout()
         sys.exit(EXIT_NO_ACCOUNT_ID)
 
-    # Get account ID64 from logged-in client (no file dependency)
-    steam_id64 = get_steam_id64(client)
     if not steam_id64:
-        print("[✗] Could not retrieve account ID64")
+        print("[✗] Could not retrieve Steam ID64")
         client.logout()
         sys.exit(EXIT_NO_ACCOUNT_ID)
+
+    print(f"[→] Parsed Account ID: {account_id}")
+    print(f"[→] Parsed Steam ID64: {steam_id64}")
 
     # Parse app IDs from command line or library
     if args.appid:
