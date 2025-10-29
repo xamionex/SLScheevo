@@ -6,15 +6,10 @@ Achievement generator for [SLSsteam](https://github.com/AceSLS/SLSsteam), origin
 
 Python 3 (Worked on with 3.12, but should work on older as well)
 
-## First time run:
+## How to run:
 
-Linux: ./build_and_run.sh
-Windows: build_and_run.bat (Do launch in CMD please!)
-
-## Subsequent runs:
-
-Linux: ./run.sh
-Windows: run.bat
+- Linux: ./run.sh
+- Windows: run.bat (Do launch in CMD please!)
 
 ## Demonstration:
 ![GIF](https://raw.githubusercontent.com/xamionex/SLScheevo/refs/heads/main/demonstration.gif)
