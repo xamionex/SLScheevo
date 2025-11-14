@@ -46,8 +46,20 @@ EXIT_FAILED_TO_GET_HWID = 12
 EXIT_NO_ACCOUNT_SPECIFIED = 13
 EXIT_FAILED_TO_PARSE_ID = 14
 
+def get_slscheevo_base_path():
+    """Get the base path for SLScheevo, works with PyInstaller"""
+    try:
+        # PyInstaller creates a temporary directory and stores its path in sys._MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        # When running from source, use the directory containing this script
+        base_path = os.path.dirname(os.path.abspath(sys.argv[0]))
+    return Path(base_path)
+
 # Data
-DATA_DIR = Path("data")
+# Use the data directory relative to this script's location, not current working directory
+BASE_DIR = get_slscheevo_base_path()
+DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = DATA_DIR / "bins"
 SKIP_FILE = DATA_DIR / "skip_generation.txt"
 NO_ACH_FILE = DATA_DIR / "no_achievement_games.txt"
