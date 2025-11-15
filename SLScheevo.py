@@ -621,7 +621,6 @@ def steam_login(login_input=None):
     # Try environment variables first
     USERNAME = os.environ.get('USERNAME', '')
     PASSWORD = os.environ.get('PASSWORD', '')
-
     # Parse login input if provided
     target_username = None
     target_account_id = None
@@ -897,7 +896,11 @@ def main():
     max_no_schema_in_row = get_maximum_tries()
 
     # Login first to get client
-    client, steam_id64, account_id = steam_login(args.login)
+    if args.login:
+        client, steam_id64, account_id = steam_login(args.login)
+    else:
+        client, steam_id64, account_id = steam_login()
+
     if not client:
         print("[✗] Failed to login to Steam")
         sys.exit(EXIT_LOGIN_FAILED)
