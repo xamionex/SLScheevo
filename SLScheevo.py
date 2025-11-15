@@ -187,7 +187,7 @@ def get_hwid():
     if system == "Windows":
         # Windows: Use disk drive serial number
         result = subprocess.check_output(
-            'wmic diskdrive get serialnumber',
+            'wmic csproduct get UUID',
             shell=True,
             stderr=subprocess.DEVNULL,
             text=True
