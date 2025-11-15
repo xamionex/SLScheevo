@@ -391,13 +391,16 @@ def save_saved_logins(logins_dict):
 
 def ensure_directories():
     """Create necessary directories"""
-    DEST_DIR.mkdir(exist_ok=True, parents=True)
+    # Ensure Steam destination exists if set
+    if DEST_DIR:
+        DEST_DIR.mkdir(exist_ok=True, parents=True)
 
-    DATA_DIR.mkdir(exist_ok=True)
-    OUTPUT_DIR.mkdir(exist_ok=True)
+    DATA_DIR.mkdir(exist_ok=True, parents=True)
+    OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
 
     # Ensure tracking files exist
     for file in [SKIP_FILE, NO_ACH_FILE]:
+        file.parent.mkdir(parents=True, exist_ok=True)
         file.touch(exist_ok=True)
 
 def get_maximum_tries():
@@ -414,6 +417,7 @@ def get_maximum_tries():
                     print(f"[!] Invalid content in {MAX_TRIES_FILE}, using default value: {max_tries}")
         else:
             # Create the file with default value 5
+            MAX_TRIES_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(MAX_TRIES_FILE, 'w') as f:
                 f.write("5")
             print(f"[→] Created {MAX_TRIES_FILE} with default value: {max_tries}")
@@ -444,7 +448,7 @@ def get_steam_id64(client):
 
 def parse_libraryfolders_vdf():
     """Parse libraryfolders.vdf to extract app IDs"""
-    if not LIBRARY_FILE.exists():
+    if not LIBRARY_FILE or not LIBRARY_FILE.exists():
         print(f"[✗] Steam library file not found at {LIBRARY_FILE}")
         sys.exit(EXIT_STEAM_NOT_FOUND)
 
@@ -572,7 +576,7 @@ def generate_stats_schema_bin(game_id, account_id, max_no_schema_in_row, client=
 
 def parse_loginusers_vdf():
     """Return a list of all account names from loginusers.vdf"""
-    if not LOGIN_FILE.exists():
+    if not LOGIN_FILE or not LOGIN_FILE.exists():
         return []
 
     content = LOGIN_FILE.read_text(encoding="utf-8", errors="ignore")
@@ -759,7 +763,8 @@ def copy_bins_to_steam_stats():
     for the given Steam ID64.
     """
     # Destination stats folder per user
-    DEST_DIR.mkdir(parents=True, exist_ok=True)
+    if DEST_DIR:
+        DEST_DIR.mkdir(parents=True, exist_ok=True)
 
     if not OUTPUT_DIR.exists():
         print(f"[✗] Source directory {OUTPUT_DIR} does not exist. Skipped copying")
@@ -773,14 +778,17 @@ def copy_bins_to_steam_stats():
         if files_copied == 0:
             print()
 
-        dest_path = DEST_DIR / file_path.name
+        dest_path = DEST_DIR / file_path.name if DEST_DIR else None
 
         # Schema files: always overwrite
         if file_path.name.startswith("UserGameStatsSchema_"):
             try:
-                shutil.copy2(file_path, dest_path)
-                files_copied += 1
-                print(f"[✓] Overwrote Schema File: {file_path} -> {dest_path}")
+                if dest_path:
+                    shutil.copy2(file_path, dest_path)
+                    files_copied += 1
+                    print(f"[✓] Overwrote Schema File: {file_path} -> {dest_path}")
+                else:
+                    print(f"[!] DEST_DIR not set, skipping copy of {file_path}")
             except Exception as e:
                 print(f"[✗] Failed to copy schema {file_path} -> {dest_path}: {e}")
                 if SILENT_MODE:
@@ -788,13 +796,16 @@ def copy_bins_to_steam_stats():
 
         # User stats files: only copy if not already present
         elif file_path.name.startswith("UserGameStats_"):
-            if dest_path.exists():
+            if dest_path and dest_path.exists():
                 print(f"[!] Stats file already exists: {dest_path}")
                 continue
             try:
-                shutil.copy2(file_path, dest_path)
-                files_copied += 1
-                print(f"[✓] Copied Stats File: {file_path} -> {dest_path}")
+                if dest_path:
+                    shutil.copy2(file_path, dest_path)
+                    files_copied += 1
+                    print(f"[✓] Copied Stats File: {file_path} -> {dest_path}")
+                else:
+                    print(f"[!] DEST_DIR not set, skipping copy of {file_path}")
             except Exception as e:
                 print(f"[✗] Failed to copy stats {file_path} -> {dest_path}: {e}")
                 if SILENT_MODE:
@@ -847,17 +858,37 @@ def parse_app_ids(appid_input):
 def main():
     global SILENT_MODE
     global VERBOSE
+    global BASE_DIR, DATA_DIR, OUTPUT_DIR, SKIP_FILE, NO_ACH_FILE, MAX_TRIES_FILE, SAVED_LOGINS_FILE, TEMPLATE_FILE
 
     parser = argparse.ArgumentParser(description='SLScheevo - Steam Stats Schema Generator')
     parser.add_argument('--login', type=str, help='Login using AccountID, SteamID, Steam2 ID, Steam3 ID, or username')
     parser.add_argument('--silent', action='store_true', help='Silent mode - no input prompts, exit with status codes')
     parser.add_argument('--verbose', action='store_true', help='Exits on non-critical statuses like no schemas for appid and such')
     parser.add_argument('--appid', type=str, help='Comma-separated list of app IDs to generate schemas for')
+    parser.add_argument('--save-dir', type=str, help='Base directory to save data and outputs (overrides default script-based base dir)')
 
     args = parser.parse_args()
 
     SILENT_MODE = args.silent
     VERBOSE = args.verbose
+
+    # If user specified a save directory, update BASE_DIR and all dependent paths
+    if args.save_dir:
+        requested = Path(args.save_dir).expanduser().resolve()
+        if not requested.exists():
+            try:
+                requested.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                print(f"[✗] Could not create save-dir '{requested}': {e}")
+                sys.exit(EXIT_FILE_ERROR)
+        BASE_DIR = requested
+        DATA_DIR = BASE_DIR / "data"
+        OUTPUT_DIR = DATA_DIR / "bins"
+        SKIP_FILE = DATA_DIR / "skip_generation.txt"
+        NO_ACH_FILE = DATA_DIR / "no_achievement_games.txt"
+        MAX_TRIES_FILE = DATA_DIR / "maximum_tries.txt"
+        SAVED_LOGINS_FILE = DATA_DIR / "saved_logins.encrypted"
+        TEMPLATE_FILE = DATA_DIR / "UserGameStats_TEMPLATE.bin"
 
     os.system('cls||clear')
 
@@ -915,7 +946,7 @@ def main():
 
         # Check if schema file already exists in backup or destination
         schema_file = f"UserGameStats_{account_id}_{app_id}.bin"
-        if (OUTPUT_DIR / schema_file).exists() or (DEST_DIR / schema_file).exists():
+        if (OUTPUT_DIR / schema_file).exists() or (DEST_DIR and (DEST_DIR / schema_file).exists()):
             continue
 
         missing_app_ids.append(app_id)
