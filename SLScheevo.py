@@ -619,8 +619,9 @@ def steam_login(login_input=None):
     client = SteamClient()
 
     # Try environment variables first
-    USERNAME = os.environ.get('USERNAME', '')
-    PASSWORD = os.environ.get('PASSWORD', '')
+    USERNAME = os.environ.get('STEAMUSERNAME', '')
+    PASSWORD = os.environ.get('STEAMPASSWORD', '')
+
     # Parse login input if provided
     target_username = None
     target_account_id = None
