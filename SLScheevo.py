@@ -47,7 +47,7 @@ EXIT_NO_ACCOUNT_SPECIFIED = 13
 EXIT_FAILED_TO_PARSE_ID = 14
 
 # Data
-BASE_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
+BASE_DIR = Path(os.path.dirname(os.path.abspath(sys.argv[0])))
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = DATA_DIR / "bins"
 SKIP_FILE = DATA_DIR / "skip_generation.txt"
