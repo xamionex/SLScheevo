@@ -55,6 +55,7 @@ SKIP_FILE = DATA_DIR / "skip_generation.txt"
 NO_ACH_FILE = DATA_DIR / "no_achievement_games.txt"
 MAX_TRIES_FILE = DATA_DIR / "maximum_tries.txt"
 SAVED_LOGINS_FILE = DATA_DIR / "saved_logins.encrypted"
+LAST_ACCOUNT_FILE = DATA_DIR / "last_account.txt"
 TEMPLATE_FILE = DATA_DIR / "UserGameStats_TEMPLATE.bin"
 LOG_FILE = DATA_DIR / "slscheevo.log"
 SILENT_MODE = False
@@ -587,6 +588,26 @@ def save_saved_logins(logins_dict):
             sys.exit(EXIT_TOKEN_ERROR)
     return False
 
+def save_last_account(account_identifier):
+    """Save the last used account identifier to a file"""
+    try:
+        with open(LAST_ACCOUNT_FILE, 'w') as f:
+            f.write(account_identifier)
+        return True
+    except Exception as e:
+        log_error(f"Error saving last account: {e}")
+        return False
+
+def load_last_account():
+    """Load the last used account identifier from file"""
+    try:
+        if LAST_ACCOUNT_FILE.exists():
+            with open(LAST_ACCOUNT_FILE, 'r') as f:
+                return f.read().strip()
+    except Exception as e:
+        log_error(f"Error loading last account: {e}")
+    return None
+
 def ensure_directories():
     """Create necessary directories"""
     # Ensure Steam destination exists if set
@@ -597,7 +618,7 @@ def ensure_directories():
     OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
 
     # Ensure tracking files exist
-    for file in [SKIP_FILE, NO_ACH_FILE]:
+    for file in [SKIP_FILE, NO_ACH_FILE, LAST_ACCOUNT_FILE]:
         file.parent.mkdir(parents=True, exist_ok=True)
         file.touch(exist_ok=True)
 
@@ -865,8 +886,15 @@ def steam_login(login_input=None):
     # Still no username? ask user (unless silent mode)
     if not USERNAME:
         if SILENT_MODE:
-            log_error("No username provided, please select a user with --login. Read more with --help")
-            sys.exit(EXIT_NO_ACCOUNT_SPECIFIED)
+            # In silent mode, try to use last account
+            last_account = load_last_account()
+            if last_account:
+                log_info(f"Using last account: {last_account}")
+                # Recursively call with last account
+                return steam_login(last_account)
+            else:
+                log_error("No username provided, please select a user with --login. Read more with --help")
+                sys.exit(EXIT_NO_ACCOUNT_SPECIFIED)
         log_base("No Steam accounts found, please log in manually")
         USERNAME = input("Steam Username: ").strip()
 
@@ -942,6 +970,12 @@ def steam_login(login_input=None):
             log_success(f"Saved encrypted login token for {USERNAME}")
         else:
             log_error(f"Could not save encrypted login token for {USERNAME}")
+
+    # Save last used account identifier
+    if login_input:
+        save_last_account(login_input)
+    else:
+        save_last_account(USERNAME)
 
     if result == EResult.OK:
         log_success("Logged into Steam successfully")
@@ -1057,7 +1091,7 @@ def parse_app_ids(appid_input):
 def main():
     global SILENT_MODE
     global VERBOSE
-    global BASE_DIR, DATA_DIR, OUTPUT_DIR, SKIP_FILE, NO_ACH_FILE, MAX_TRIES_FILE, SAVED_LOGINS_FILE, TEMPLATE_FILE
+    global BASE_DIR, DATA_DIR, OUTPUT_DIR, SKIP_FILE, NO_ACH_FILE, MAX_TRIES_FILE, SAVED_LOGINS_FILE, TEMPLATE_FILE, LAST_ACCOUNT_FILE
 
     parser = argparse.ArgumentParser(description='SLScheevo - Steam Stats Schema Generator')
     parser.add_argument('--login', type=str, help='Login using AccountID, SteamID, Steam2 ID, Steam3 ID, or username')
@@ -1087,6 +1121,7 @@ def main():
         NO_ACH_FILE = DATA_DIR / "no_achievement_games.txt"
         MAX_TRIES_FILE = DATA_DIR / "maximum_tries.txt"
         SAVED_LOGINS_FILE = DATA_DIR / "saved_logins.encrypted"
+        LAST_ACCOUNT_FILE = DATA_DIR / "last_account.txt"
         TEMPLATE_FILE = DATA_DIR / "UserGameStats_TEMPLATE.bin"
         LOG_FILE = DATA_DIR / "slscheevo.log"
 
