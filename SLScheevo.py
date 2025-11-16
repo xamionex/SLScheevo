@@ -75,7 +75,7 @@ def determine_steam_directory():
             steam_path, _ = winreg.QueryValueEx(key, "SteamPath")
             winreg.CloseKey(key)
             print(f"Found Steam installation at: {steam_path}")
-            STEAM_DIR = os.path.normpath(steam_path)
+            STEAM_DIR = Path(os.path.normpath(steam_path))
         except Exception:
             print("Failed to read Steam path from registry.")
             sys.exit(EXIT_STEAM_NOT_FOUND)
@@ -94,19 +94,25 @@ def determine_steam_directory():
                 print(f"[1] Native: {native_path}")
                 print(f"[2] Flatpak: {flatpak_path}")
                 while True:
-                    choice = int(input("Which one to use? (1/2): "))
-                    if choice == 1:
-                        STEAM_DIR = native_path
-                        break
-                    elif choice == 2:
-                        STEAM_DIR = flatpak_path
-                        break
-                    else:
+                    try:
+                        choice = int(input("Which one to use? (1/2): "))
+                        if choice == 1:
+                            STEAM_DIR = native_path
+                            break
+                        elif choice == 2:
+                            STEAM_DIR = flatpak_path
+                            break
+                        else:
+                            print("Invalid input, please enter 1 or 2.")
+                    except ValueError:
                         print("Invalid input, please enter 1 or 2.")
         elif native_exists:
             STEAM_DIR = native_path
-        else:
+        elif flatpak_exists:
             STEAM_DIR = flatpak_path
+        else:
+            print("No Steam installation found.")
+            sys.exit(EXIT_STEAM_NOT_FOUND)
 
     if not STEAM_DIR.exists():
         print(f"Steam directory does not exist at '{STEAM_DIR}'. Please report this issue")
