@@ -17,6 +17,7 @@ import uuid
 import getpass
 import hashlib
 import argparse
+import logging
 from pathlib import Path
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
@@ -55,6 +56,7 @@ NO_ACH_FILE = DATA_DIR / "no_achievement_games.txt"
 MAX_TRIES_FILE = DATA_DIR / "maximum_tries.txt"
 SAVED_LOGINS_FILE = DATA_DIR / "saved_logins.encrypted"
 TEMPLATE_FILE = DATA_DIR / "UserGameStats_TEMPLATE.bin"
+LOG_FILE = DATA_DIR / "slscheevo.log"
 SILENT_MODE = False
 VERBOSE = False
 
@@ -63,6 +65,161 @@ STEAM_DIR = None
 LIBRARY_FILE = None
 LOGIN_FILE = None
 DEST_DIR = None
+
+class ConsoleFormatter(logging.Formatter):
+    """Formatter for console without timestamps"""
+    SYMBOLS = {
+        'SUCCESS': "[✓] ",
+        'INFO': "[→] ",
+        'WARNING': "[!] ",
+        'ERROR': "[✗] "
+    }
+
+    def format(self, record):
+        symbol = ""
+
+        if hasattr(record, "custom_level"):
+            symbol = self.SYMBOLS.get(record.custom_level, "")
+        elif record.levelname == "INFO":
+            symbol = "[→] "
+
+        return f"{symbol}{record.getMessage()}"
+
+def setup_logging():
+    """Setup logging to both console and file"""
+    DATA_DIR.mkdir(exist_ok=True, parents=True)
+    
+    # Create logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # Clear any existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # File handler with timestamps
+    file_handler = logging.FileHandler(LOG_FILE, encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_formatter = logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    file_handler.setFormatter(file_formatter)
+    logger.addHandler(file_handler)
+    
+    # Console handler without timestamps
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_formatter = ConsoleFormatter()
+    console_handler.setFormatter(console_formatter)
+    logger.addHandler(console_handler)
+
+def log_base(message):
+    """Log message without any symbols"""
+    logger = logging.getLogger()
+    if logger.isEnabledFor(logging.INFO):
+        record = logging.LogRecord(
+            name=__name__,
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=0,
+            msg=message,
+            args=None,
+            exc_info=None
+        )
+        record.custom_level = 'BASE'
+        logger.handle(record)
+
+def log_info(message):
+    """Log info message with [→] symbol"""
+    logger = logging.getLogger()
+    if logger.isEnabledFor(logging.INFO):
+        record = logging.LogRecord(
+            name=__name__,
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=0,
+            msg=message,
+            args=None,
+            exc_info=None
+        )
+        record.custom_level = 'INFO'
+        logger.handle(record)
+
+def log_success(message):
+    """Log success message with [✓] symbol"""
+    logger = logging.getLogger()
+    if logger.isEnabledFor(logging.INFO):
+        record = logging.LogRecord(
+            name=__name__,
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=0,
+            msg=message,
+            args=None,
+            exc_info=None
+        )
+        record.custom_level = 'SUCCESS'
+        logger.handle(record)
+
+def log_error(message):
+    """Log error message with [✗] symbol"""
+    logger = logging.getLogger()
+    if logger.isEnabledFor(logging.ERROR):
+        record = logging.LogRecord(
+            name=__name__,
+            level=logging.ERROR,
+            pathname=__file__,
+            lineno=0,
+            msg=message,
+            args=None,
+            exc_info=None
+        )
+        record.custom_level = 'ERROR'
+        logger.handle(record)
+
+def log_warning(message):
+    """Log warning message with [!] symbol"""
+    logger = logging.getLogger()
+    if logger.isEnabledFor(logging.WARNING):
+        record = logging.LogRecord(
+            name=__name__,
+            level=logging.WARNING,
+            pathname=__file__,
+            lineno=0,
+            msg=message,
+            args=None,
+            exc_info=None
+        )
+        record.custom_level = 'WARNING'
+        logger.handle(record)
+
+def install_global_exception_logger():
+    """Catch all unhandled exceptions and log them before exiting."""
+
+    def handle_exception(exc_type, exc_value, exc_traceback):
+        logger = logging.getLogger()
+
+        if issubclass(exc_type, KeyboardInterrupt):
+            # Don't log Ctrl+C as an error
+            logger.info("Interrupted by user (KeyboardInterrupt).")
+            return
+
+        # Log full traceback to file
+        logger.error("UNHANDLED EXCEPTION OCCURRED!", exc_info=(exc_type, exc_value, exc_traceback))
+
+        # Also log a clean message to the console
+        log_error(f"Unhandled crash: {exc_value}")
+
+    sys.excepthook = handle_exception
+
+def prompt(msg: str) -> str:
+    """Log a prompt with [→] but keep input on same line."""
+    # Get the formatted prefix from the logger (e.g. "[→] ")
+    prefix = ConsoleFormatter.SYMBOLS.get("INFO", "[→] ")
+
+    # Print prefix and message WITHOUT newline
+    print(f"{prefix}{msg} ", end="", flush=True)
+
+    # Now take input
+    return input()
 
 def determine_steam_directory():
     global STEAM_DIR, LIBRARY_FILE, LOGIN_FILE, DEST_DIR
@@ -74,10 +231,10 @@ def determine_steam_directory():
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam")
             steam_path, _ = winreg.QueryValueEx(key, "SteamPath")
             winreg.CloseKey(key)
-            print(f"Found Steam installation at: {steam_path}")
+            log_info(f"Found Steam installation at: {steam_path}")
             STEAM_DIR = Path(os.path.normpath(steam_path))
         except Exception:
-            print("Failed to read Steam path from registry.")
+            log_error("Failed to read Steam path from registry.")
             sys.exit(EXIT_STEAM_NOT_FOUND)
     else:
         native_path = Path.home() / ".local/share/Steam"
@@ -90,9 +247,9 @@ def determine_steam_directory():
             if SILENT_MODE:
                 STEAM_DIR = native_path
             else:
-                print("Found both native and Flatpak Steam installations:")
-                print(f"[1] Native: {native_path}")
-                print(f"[2] Flatpak: {flatpak_path}")
+                log_base("Found both native and Flatpak Steam installations:")
+                log_base(f"[1] Native: {native_path}")
+                log_base(f"[2] Flatpak: {flatpak_path}")
                 while True:
                     try:
                         choice = int(input("Which one to use? (1/2): "))
@@ -103,19 +260,19 @@ def determine_steam_directory():
                             STEAM_DIR = flatpak_path
                             break
                         else:
-                            print("Invalid input, please enter 1 or 2.")
+                            log_base("Invalid input, please enter 1 or 2.")
                     except ValueError:
-                        print("Invalid input, please enter 1 or 2.")
+                        log_base("Invalid input, please enter 1 or 2.")
         elif native_exists:
             STEAM_DIR = native_path
         elif flatpak_exists:
             STEAM_DIR = flatpak_path
         else:
-            print("No Steam installation found.")
+            log_error("No Steam installation found.")
             sys.exit(EXIT_STEAM_NOT_FOUND)
 
     if not STEAM_DIR.exists():
-        print(f"Steam directory does not exist at '{STEAM_DIR}'. Please report this issue")
+        log_error(f"Steam directory does not exist at '{STEAM_DIR}'. Please report this issue")
         sys.exit(EXIT_STEAM_NOT_FOUND)
 
     # Set the dependent paths
@@ -165,7 +322,7 @@ def parse_steam_id(identifier: str):
             account_id = (z << 1) | y
             steam_id64 = steamid64_from_account_id(account_id)
         except Exception as e:
-            print(f"[✗] Failed to parse Steam2 ID ({identifier}): {e}")
+            log_error(f"Failed to parse Steam2 ID ({identifier}): {e}")
             sys.exit(EXIT_FAILED_TO_PARSE_ID)
 
     # Steam3 ID: [U:1:ACCOUNT_ID]
@@ -175,7 +332,7 @@ def parse_steam_id(identifier: str):
             account_id = int(parts[-1])
             steam_id64 = steamid64_from_account_id(account_id)
         except Exception as e:
-            print(f"[✗] Failed to parse Steam3 ID ({identifier}): {e}")
+            log_error(f"Failed to parse Steam3 ID ({identifier}): {e}")
             sys.exit(EXIT_FAILED_TO_PARSE_ID)
 
     # Pure numeric input
@@ -190,10 +347,10 @@ def parse_steam_id(identifier: str):
                 steam_id64 = steamid64_from_account_id(num)
             else:
                 sys.exit(EXIT_FAILED_TO_PARSE_ID)
-                print(f"[✗] Invalid numeric Steam ID range: {num}")
+                log_error(f"Invalid numeric Steam ID range: {num}")
         except Exception as e:
             sys.exit(EXIT_FAILED_TO_PARSE_ID)
-            print(f"[✗] Failed to parse numeric ID ({identifier}): {e}")
+            log_error(f"Failed to parse numeric ID ({identifier}): {e}")
 
     return (
         str(account_id) if account_id is not None else None,
@@ -235,7 +392,7 @@ def get_hwid():
         except Exception:
             pass
 
-        print("Failed to retrieve HWID on Windows.")
+        log_error("Failed to retrieve HWID on Windows.")
         sys.exit(EXIT_FAILED_TO_GET_HWID)
 
     elif system == "Linux":
@@ -247,11 +404,11 @@ def get_hwid():
                     return machine_id
         except Exception:
             pass
-        print("Failed to retrieve machine ID on Linux.")
+        log_error("Failed to retrieve machine ID on Linux.")
         sys.exit(EXIT_FAILED_TO_GET_HWID)
 
     else:
-        print(f"Unsupported platform: {system}")
+        log_error(f"Unsupported platform: {system}")
         sys.exit(EXIT_NOT_SUPPORTED)
 
 def derive_key():
@@ -285,7 +442,7 @@ def encrypt_saved_logins(logins_dict):
 
         return encrypted_data
     except Exception as e:
-        print(f"[!] Error encrypting logins: {e}")
+        log_error(f"Error encrypting logins: {e}")
         return None
 
 def decrypt_saved_logins(encrypted_data):
@@ -300,7 +457,7 @@ def decrypt_saved_logins(encrypted_data):
 
         return logins_dict
     except Exception as e:
-        print(f"[!] Error decrypting logins: {e}")
+        log_error(f"Error decrypting logins: {e}")
         return {}
 
 def migrate_old_tokens_to_new_format():
@@ -373,17 +530,17 @@ def migrate_old_tokens_to_new_format():
                 # Delete old file after migration
                 old_file.unlink()
                 migrated = True
-                print(f"[→] Migrated {old_file} to new format")
+                log_info(f"Migrated {old_file} to new format")
 
             except Exception as e:
-                print(f"[!] Error migrating {old_file}: {e}")
+                log_error(f"Error migrating {old_file}: {e}")
 
     # Save migrated data
     if migrated and new_logins:
         if save_saved_logins(new_logins):
-            print("[✓] Successfully migrated old tokens to saved_logins.encrypted")
+            log_success("Successfully migrated old tokens to saved_logins.encrypted")
         else:
-            print("[!] Failed to save migrated tokens")
+            log_error("Failed to save migrated tokens")
 
     return migrated
 
@@ -409,11 +566,11 @@ def load_saved_logins():
             if logins:
                 return logins
             else:
-                print("[!] Failed to decrypt logins with current system")
-                print("[!] This might happen if you changed hardware or system user")
+                log_error("Failed to decrypt logins with current system")
+                log_error("This might happen if you changed hardware or system user")
 
         except Exception as e:
-            print(f"[!] Error loading encrypted logins: {e}")
+            log_error(f"Error loading encrypted logins: {e}")
 
     return {}
 
@@ -426,7 +583,7 @@ def save_saved_logins(logins_dict):
                 f.write(encrypted_data)
             return True
         except Exception as e:
-            print(f"[!] Error saving encrypted logins: {e}")
+            log_error(f"Error saving encrypted logins: {e}")
             sys.exit(EXIT_TOKEN_ERROR)
     return False
 
@@ -453,17 +610,17 @@ def get_maximum_tries():
                 content = f.read().strip()
                 if content.isdigit():
                     max_tries = int(content)
-                    print(f"[→] Using maximum tries from file: {max_tries}")
+                    log_info(f"Using maximum tries from file: {max_tries}")
                 else:
-                    print(f"[!] Invalid content in {MAX_TRIES_FILE}, using default value: {max_tries}")
+                    log_error(f"Invalid content in {MAX_TRIES_FILE}, using default value: {max_tries}")
         else:
             # Create the file with default value 5
             MAX_TRIES_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(MAX_TRIES_FILE, 'w') as f:
                 f.write("5")
-            print(f"[→] Created {MAX_TRIES_FILE} with default value: {max_tries}")
+            log_info(f"Created {MAX_TRIES_FILE} with default value: {max_tries}")
     except Exception as e:
-        print(f"[!] Error reading maximum_tries file: {e}, using default value: {max_tries}")
+        log_error(f"Error reading maximum_tries file: {e}, using default value: {max_tries}")
 
     return max_tries
 
@@ -471,29 +628,29 @@ def get_account_id(client):
     """Get Steam Account ID directly from logged-in client"""
     if client and hasattr(client, 'steam_id') and client.steam_id:
         account_id = client.steam_id.account_id
-        print(f"[✓] Using Account ID from logged-in client: {account_id}")
+        log_success(f"Using Account ID from logged-in client: {account_id}")
         return str(account_id)
 
-    print("[✗] No logged-in client available for Account ID")
+    log_error("No logged-in client available for Account ID")
     return None
 
 def get_steam_id64(client):
     """Get Steam Steam ID64 directly from logged-in client"""
     if client and hasattr(client, 'steam_id') and client.steam_id:
         steam_id64 = client.steam_id.as_64
-        print(f"[✓] Using Steam ID64 from logged-in client: {steam_id64}")
+        log_success(f"Using Steam ID64 from logged-in client: {steam_id64}")
         return str(steam_id64)
 
-    print("[✗] No logged-in client available for Steam ID64")
+    log_error("No logged-in client available for Steam ID64")
     return None
 
 def parse_libraryfolders_vdf():
     """Parse libraryfolders.vdf to extract app IDs"""
     if not LIBRARY_FILE or not LIBRARY_FILE.exists():
-        print(f"[✗] Steam library file not found at {LIBRARY_FILE}")
+        log_error(f"Steam library file not found at {LIBRARY_FILE}")
         sys.exit(EXIT_STEAM_NOT_FOUND)
 
-    print(f"[→] Reading Steam library from: {LIBRARY_FILE}")
+    log_info(f"Reading Steam library from: {LIBRARY_FILE}")
 
     content = LIBRARY_FILE.read_text()
     # Extract all app IDs using regex
@@ -531,24 +688,24 @@ def check_single_owner(game_id, owner_id, client):
               hasattr(out.body, 'crc_stats') and out.body.crc_stats == 0):
             return "NO_SCHEMA"  # Special indicator for no schema
     except Exception as e:
-        print(f"\n    [✗] Exception for owner {owner_id}: {e}")
+        log_error(f"Exception for owner {owner_id}: {e}")
         traceback.print_exc(limit=1)
     return None
 
 def generate_stats_schema_bin(game_id, account_id, max_no_schema_in_row, client=None):
     """Generate stats and schema files with no-schema detection"""
-    print(f"\n[→] Generating stats schema for game ID {game_id}")
+    log_info(f"Generating stats schema for game ID {game_id}")
 
     should_logout = False
     if not client:
         client = steam_login()
         if not client:
-            print("[✗] Aborting schema generation - not logged in")
+            log_error("Aborting schema generation - not logged in")
             return False
         should_logout = True
 
     total_owners = len(TOP_OWNER_IDS)
-    print(f"[→] Checking {total_owners} potential owners")
+    log_info(f"Checking {total_owners} potential owners")
 
     stats_schema_found = None
     found_owner = None
@@ -596,13 +753,13 @@ def generate_stats_schema_bin(game_id, account_id, max_no_schema_in_row, client=
         schema_path = OUTPUT_DIR / f"UserGameStatsSchema_{game_id}.bin"
         with open(schema_path, "wb") as f:
             f.write(stats_schema_found)
-        print(f"[✓] Saved {schema_path} ({len(stats_schema_found)} bytes)")
+        log_success(f"Saved {schema_path} ({len(stats_schema_found)} bytes)")
 
         user_path = OUTPUT_DIR / f"UserGameStats_{account_id}_{game_id}.bin"
         shutil.copyfile(TEMPLATE_FILE, user_path)
-        print(f"[✓] Copied template to {user_path} ({TEMPLATE_FILE.stat().st_size} bytes)")
+        log_success(f"Copied template to {user_path} ({TEMPLATE_FILE.stat().st_size} bytes)")
     except Exception as e:
-        print(f"[✗] Error writing schema files: {e}")
+        log_error(f"Error writing schema files: {e}")
         if should_logout:
             client.logout()
         if SILENT_MODE:
@@ -612,7 +769,7 @@ def generate_stats_schema_bin(game_id, account_id, max_no_schema_in_row, client=
     if should_logout:
         client.logout()
 
-    print(f"[✓] Finished schema generation for game {game_id} (owner {found_owner})")
+    log_success(f"Finished schema generation for game {game_id} (owner {found_owner})")
     return True
 
 def parse_loginusers_vdf():
@@ -695,11 +852,11 @@ def steam_login(login_input=None):
     if not USERNAME and not SILENT_MODE:
         available_accounts = get_available_accounts()
         if available_accounts:
-            print("[→] Available accounts:")
+            log_info("Available accounts:")
             for i, user in enumerate(available_accounts, 1):
-                print(f"[{i}]: {user}")
+                log_base(f"[{i}]: {user}")
             try:
-                num = int(input("[→] Choose an account to login (0 for new account): "))
+                num = int(prompt("Choose an account to login (0 for new account):"))
                 if 0 < num <= len(available_accounts):
                     USERNAME = available_accounts[num - 1]
             except ValueError:
@@ -708,10 +865,10 @@ def steam_login(login_input=None):
     # Still no username? ask user (unless silent mode)
     if not USERNAME:
         if SILENT_MODE:
-            print("[✗] No username provided, please select a user with --login. Read more with --help")
+            log_error("No username provided, please select a user with --login. Read more with --help")
             sys.exit(EXIT_NO_ACCOUNT_SPECIFIED)
-        print("[!] No Steam accounts found, please log in manually")
-        USERNAME = input("[→] Steam Username: ").strip()
+        log_base("No Steam accounts found, please log in manually")
+        USERNAME = input("Steam Username: ").strip()
 
     # Try to get refresh token from saved logins if not already found
     if not REFRESH_TOKEN:
@@ -744,8 +901,8 @@ def steam_login(login_input=None):
 
             client.reconnect(maxdelay=15)
         elif result == EResult.InvalidPassword:
-            print("[✗] Invalid password or refresh_token.")
-            print(f"[!] Correct the password or delete '{SAVED_LOGINS_FILE}' and try again.")
+            log_error("Invalid password or refresh_token.")
+            log_error(f"Correct the password or delete '{SAVED_LOGINS_FILE}' and try again.")
             client.logout()
             sys.exit(EXIT_LOGIN_FAILED)
 
@@ -755,10 +912,10 @@ def steam_login(login_input=None):
                     if SILENT_MODE:
                         client.logout()
                         sys.exit(EXIT_INPUT_REQUIRED)
-                    PASSWORD = input("[→] Steam Password: ").strip()
+                    PASSWORD = input("Steam Password: ").strip()
                 webauth.cli_login(USERNAME, PASSWORD)
             except Exception as e:
-                print(f'[✗] Login failed: {e}')
+                log_error(f'Login failed: {e}')
                 client.logout()
                 sys.exit(EXIT_LOGIN_FAILED)
 
@@ -782,19 +939,19 @@ def steam_login(login_input=None):
         }
 
         if save_saved_logins(saved_logins):
-            print(f"[✓] Saved encrypted login token for {USERNAME}")
+            log_success(f"Saved encrypted login token for {USERNAME}")
         else:
-            print(f"[✗] Could not save encrypted login token for {USERNAME}")
+            log_error(f"Could not save encrypted login token for {USERNAME}")
 
     if result == EResult.OK:
-        print("[✓] Logged into Steam successfully")
+        log_success("Logged into Steam successfully")
         # Add our own account ID to the top of the owner list
         if steam_id64 not in TOP_OWNER_IDS:
             TOP_OWNER_IDS.insert(0, steam_id64)
-            print(f"[→] Added your account ({steam_id64}) to owner list")
+            log_info(f"Added your account ({steam_id64}) to owner list")
         return client, steam_id64, account_id
     else:
-        print(f"[✗] Steam login failed: {result.name}")
+        log_error(f"Steam login failed: {result.name}")
         client.logout()
         sys.exit(EXIT_LOGIN_FAILED)
 
@@ -808,7 +965,7 @@ def copy_bins_to_steam_stats():
         DEST_DIR.mkdir(parents=True, exist_ok=True)
 
     if not OUTPUT_DIR.exists():
-        print(f"[✗] Source directory {OUTPUT_DIR} does not exist. Skipped copying")
+        log_error(f"Source directory {OUTPUT_DIR} does not exist. Skipped copying")
         return
 
     files_copied = 0
@@ -817,7 +974,7 @@ def copy_bins_to_steam_stats():
             continue
 
         if files_copied == 0:
-            print()
+            log_base("")
 
         dest_path = DEST_DIR / file_path.name if DEST_DIR else None
 
@@ -827,61 +984,62 @@ def copy_bins_to_steam_stats():
                 if dest_path:
                     shutil.copy2(file_path, dest_path)
                     files_copied += 1
-                    print(f"[✓] Overwrote Schema File: {file_path} -> {dest_path}")
+                    log_success(f"Overwrote Schema File: {file_path} -> {dest_path}")
                 else:
-                    print(f"[!] DEST_DIR not set, skipping copy of {file_path}")
+                    log_info(f"DEST_DIR not set, skipping copy of {file_path}")
             except Exception as e:
-                print(f"[✗] Failed to copy schema {file_path} -> {dest_path}: {e}")
+                log_error(f"Failed to copy schema {file_path} -> {dest_path}: {e}")
                 if SILENT_MODE:
                     sys.exit(EXIT_FILE_ERROR)
 
         # User stats files: only copy if not already present
         elif file_path.name.startswith("UserGameStats_"):
             if dest_path and dest_path.exists():
-                print(f"[!] Stats file already exists: {dest_path}")
+                log_warning(f"Stats file already exists: {dest_path}")
                 continue
             try:
                 if dest_path:
                     shutil.copy2(file_path, dest_path)
                     files_copied += 1
-                    print(f"[✓] Copied Stats File: {file_path} -> {dest_path}")
+                    log_success(f"Copied Stats File: {file_path} -> {dest_path}")
                 else:
-                    print(f"[!] DEST_DIR not set, skipping copy of {file_path}")
+                    log_info(f"DEST_DIR not set, skipping copy of {file_path}")
             except Exception as e:
-                print(f"[✗] Failed to copy stats {file_path} -> {dest_path}: {e}")
+                log_error(f"Failed to copy stats {file_path} -> {dest_path}: {e}")
                 if SILENT_MODE:
                     sys.exit(EXIT_FILE_ERROR)
 
     if files_copied > 0:
-        print(f"\n[✓] Copied {files_copied} files to {DEST_DIR}")
+        log_success(f"Copied {files_copied} files to {DEST_DIR}")
 
 def prompt_security_warning():
     """Prompt user about security and ask if they want to delete the encrypted tokens"""
     if SILENT_MODE:
         return
 
-    print(f"\n{'='*80}")
-    print(f"SLScheevo Security Notice")
-    print(f"{'='*80}")
-    print(f"Your Steam login tokens have been saved in an encrypted file:")
-    print(f"{os.path.abspath(SAVED_LOGINS_FILE)}")
-    print(f"While encrypted, this file still contains sensitive information.")
-    print(f"If you don't plan to use SLScheevo for a while then please delete this file")
-    print(f"{'='*80}")
+    log_base(f"\n{'='*80}")
+    log_base(f"SLScheevo Security Notice")
+    log_base(f"{'='*80}")
+    log_base(f"Your Steam login tokens have been saved in an encrypted file:")
+    log_base(f"{os.path.abspath(SAVED_LOGINS_FILE)}")
+    log_base(f"While encrypted, this file still contains sensitive information.")
+    log_base(f"If you don't plan to use SLScheevo for a while then please delete this file")
+    log_base(f"{'='*80}")
 
     try:
-        response = input("\nDo you want to delete the encrypted tokens file now? (y/n): ").strip().lower()
-        print("")
+        log_base("")
+        response = prompt("Do you want to delete the encrypted tokens file now? (y/n): ").strip().lower()
+        log_base("")
         if response in ['y', 'yes']:
             if SAVED_LOGINS_FILE.exists():
                 SAVED_LOGINS_FILE.unlink()
-                print("[✓] Encrypted tokens file deleted.")
+                log_success("Encrypted tokens file deleted.")
             else:
-                print("[!] File already deleted or doesn't exist.")
+                log_warning("File already deleted or doesn't exist.")
         else:
-            print("[→] File kept. Remember to delete it manually if needed.")
+            log_warning("File kept. Remember to delete it manually if needed.")
     except (KeyboardInterrupt, EOFError):
-        print("\n[→] File kept. Remember to delete it manually if needed.")
+        log_base("\nFile kept. Remember to delete it manually if needed.")
 
 def parse_app_ids(appid_input):
     """Parse comma-separated app IDs string into list of integers"""
@@ -920,7 +1078,7 @@ def main():
             try:
                 requested.mkdir(parents=True, exist_ok=True)
             except Exception as e:
-                print(f"[✗] Could not create save-dir '{requested}': {e}")
+                log_error(f"Could not create save-dir '{requested}': {e}")
                 sys.exit(EXIT_FILE_ERROR)
         BASE_DIR = requested
         DATA_DIR = BASE_DIR / "data"
@@ -930,8 +1088,17 @@ def main():
         MAX_TRIES_FILE = DATA_DIR / "maximum_tries.txt"
         SAVED_LOGINS_FILE = DATA_DIR / "saved_logins.encrypted"
         TEMPLATE_FILE = DATA_DIR / "UserGameStats_TEMPLATE.bin"
+        LOG_FILE = DATA_DIR / "slscheevo.log"
 
-    os.system('cls||clear')
+    # Setup logging after paths are configured
+    setup_logging()
+    install_global_exception_logger()
+
+    # Clear screen based on platform
+    if platform.system() == "Windows":
+        os.system('cls')
+    else:
+        os.system('clear')
 
     determine_steam_directory()
     ensure_directories()
@@ -944,38 +1111,38 @@ def main():
         client, steam_id64, account_id = steam_login()
 
     if not client:
-        print("[✗] Failed to login to Steam")
+        log_error("Failed to login to Steam")
         sys.exit(EXIT_LOGIN_FAILED)
 
     if not account_id:
-        print("[✗] Could not retrieve account ID")
+        log_error("Could not retrieve account ID")
         client.logout()
         sys.exit(EXIT_NO_ACCOUNT_ID)
 
     if not steam_id64:
-        print("[✗] Could not retrieve Steam ID64")
+        log_error("Could not retrieve Steam ID64")
         client.logout()
         sys.exit(EXIT_NO_ACCOUNT_ID)
 
-    print(f"[→] Parsed Account ID: {account_id}")
-    print(f"[→] Parsed Steam ID64: {steam_id64}")
+    log_info(f"Parsed Account ID: {account_id}")
+    log_info(f"Parsed Steam ID64: {steam_id64}")
 
     # Parse app IDs from command line or library
     if args.appid:
         app_ids = parse_app_ids(args.appid)
         if not app_ids:
-            print("[✗] No valid app IDs provided with --appid")
+            log_error("No valid app IDs provided with --appid")
             client.logout()
             sys.exit(EXIT_NO_APP_IDS)
-        print(f"[→] Using {len(app_ids)} app IDs from command line: {app_ids}")
+        log_info(f"Using {len(app_ids)} app IDs from command line: {app_ids}")
     else:
         # Parse Steam library
         app_ids = parse_libraryfolders_vdf()
         if not app_ids:
-            print("[✗] No app IDs found in library file.")
+            log_error("No app IDs found in library file.")
             client.logout()
             sys.exit(EXIT_NO_APP_IDS)
-        print(f"[✓] Found {len(app_ids)} games in library")
+        log_success(f"Found {len(app_ids)} games in library")
 
     # Read tracking files
     skip_generation = read_tracking_file(SKIP_FILE)
@@ -997,27 +1164,29 @@ def main():
         missing_app_ids.append(app_id)
 
     if not missing_app_ids:
-        print("[!] No missing stats files to generate")
+        log_info("No missing stats files to generate")
         client.logout()
         copy_bins_to_steam_stats()
         prompt_security_warning()
         sys.exit(EXIT_NO_ACTIONS)
 
-    print(f"[→] Generating stats for {len(missing_app_ids)} missing games")
+    log_info(f"Generating stats for {len(missing_app_ids)} missing games")
 
     # Generate missing stats
     success_count = 0
     failed_count = 0
 
     for i, app_id in enumerate(missing_app_ids, 1):
-        print(f"\n[→] Progress: {i}/{len(missing_app_ids)}")
+        log_base("")
+        log_info(f"Progress: {i}/{len(missing_app_ids)}")
 
         if generate_stats_schema_bin(app_id, account_id, max_no_schema_in_row, client):
             success_count += 1
         else:
             failed_count += 1
 
-    print(f"\n[✓] Generation complete: {success_count} succeeded, {failed_count} failed")
+    log_base("")
+    log_success(f"Generation complete: {success_count} succeeded, {failed_count} failed")
 
     client.logout()
 
