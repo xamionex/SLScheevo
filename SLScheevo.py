@@ -74,10 +74,10 @@ def determine_steam_directory():
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam")
             steam_path, _ = winreg.QueryValueEx(key, "SteamPath")
             winreg.CloseKey(key)
-            logger.info(f"Found Steam installation at: {steam_path}")
+            print(f"Found Steam installation at: {steam_path}")
             STEAM_DIR = os.path.normpath(steam_path)
         except Exception:
-            logger.error("Failed to read Steam path from registry.")
+            print("Failed to read Steam path from registry.")
             sys.exit(EXIT_STEAM_NOT_FOUND)
     else:
         native_path = Path.home() / ".local/share/Steam"
@@ -109,7 +109,7 @@ def determine_steam_directory():
             STEAM_DIR = flatpak_path
 
     if not STEAM_DIR.exists():
-        logger.error(f"Steam directory does not exist at '{STEAM_DIR}'. Please report this issue")
+        print(f"Steam directory does not exist at '{STEAM_DIR}'. Please report this issue")
         sys.exit(EXIT_STEAM_NOT_FOUND)
 
     # Set the dependent paths
