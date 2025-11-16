@@ -89,27 +89,37 @@ class ConsoleFormatter(logging.Formatter):
 def setup_logging():
     """Setup logging to both console and file"""
     DATA_DIR.mkdir(exist_ok=True, parents=True)
-    
+
     # Create logger
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
-    
+
     # Clear any existing handlers
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
-    
+
     # File handler with timestamps
     file_handler = logging.FileHandler(LOG_FILE, encoding='utf-8')
     file_handler.setLevel(logging.INFO)
     file_formatter = logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
-    
-    # Console handler without timestamps
+
+    # Console handler without timestamps and UTF-8 encoding
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
     console_formatter = ConsoleFormatter()
     console_handler.setFormatter(console_formatter)
+
+    # Force UTF-8 encoding for console output
+    if hasattr(console_handler, 'setStream'):
+        import io
+        console_handler.setStream(io.TextIOWrapper(
+            console_handler.stream.detach(),
+            encoding='utf-8',
+            errors='replace'
+        ))
+
     logger.addHandler(console_handler)
 
 def log_base(message):
