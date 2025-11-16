@@ -181,33 +181,51 @@ def parse_steam_id(identifier: str):
     )
 
 def get_hwid():
-    """Get Hardware ID that works on both Linux and Windows, without fallbacks."""
+    """Get Hardware ID that works on both Linux and Windows, with robust fallbacks."""
     system = platform.system()
 
     if system == "Windows":
-        # Windows: Use disk drive serial number
-        result = subprocess.check_output(
-            'wmic csproduct get UUID',
-            shell=True,
-            stderr=subprocess.DEVNULL,
-            text=True
-        )
-        lines = [line.strip() for line in result.split('\n') if line.strip()]
-        if len(lines) > 1 and lines[1]:
-            return lines[1]
-        else:
-            print("Failed to retrieve disk serial number on Windows.")
-            sys.exit(EXIT_FAILED_TO_GET_HWID)
+        # Try WMIC first
+        try:
+            result = subprocess.check_output(
+                'wmic csproduct get UUID',
+                shell=True,
+                stderr=subprocess.DEVNULL,
+                text=True
+            )
+            lines = [line.strip() for line in result.split('\n') if line.strip()]
+            if len(lines) > 1 and lines[1]:
+                return lines[1]
+        except FileNotFoundError:
+            pass  # wmic not found
+
+        # Fallback: PowerShell
+        try:
+            result = subprocess.check_output(
+                'powershell -Command "Get-CimInstance Win32_ComputerSystemProduct | Select-Object -ExpandProperty UUID"',
+                shell=True,
+                stderr=subprocess.DEVNULL,
+                text=True
+            ).strip()
+            if result:
+                return result
+        except Exception:
+            pass
+
+        print("Failed to retrieve HWID on Windows.")
+        sys.exit(EXIT_FAILED_TO_GET_HWID)
 
     elif system == "Linux":
         # Linux: Try machine-id first
-        with open("/etc/machine-id", "r") as f:
-            machine_id = f.read().strip()
-            if machine_id:
-                return machine_id
-            else:
-                print("Machine ID file is empty.")
-                sys.exit(EXIT_FAILED_TO_GET_HWID)
+        try:
+            with open("/etc/machine-id", "r") as f:
+                machine_id = f.read().strip()
+                if machine_id:
+                    return machine_id
+        except Exception:
+            pass
+        print("Failed to retrieve machine ID on Linux.")
+        sys.exit(EXIT_FAILED_TO_GET_HWID)
 
     else:
         print(f"Unsupported platform: {system}")
