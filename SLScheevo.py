@@ -70,10 +70,10 @@ DEST_DIR = None
 class ConsoleFormatter(logging.Formatter):
     """Formatter for console without timestamps"""
     SYMBOLS = {
-        'SUCCESS': "[✓] ",
-        'INFO': "[→] ",
-        'WARNING': "[!] ",
-        'ERROR': "[✗] "
+        'SUCCESS': "[OK] ",
+        'INFO': "[->] ",
+        'WARNING': "[!!] ",
+        'ERROR': "[XX] "
     }
 
     def format(self, record):
@@ -110,15 +110,6 @@ def setup_logging():
     console_handler.setLevel(logging.INFO)
     console_formatter = ConsoleFormatter()
     console_handler.setFormatter(console_formatter)
-
-    # Force UTF-8 encoding for console output
-    if hasattr(console_handler, 'setStream'):
-        import io
-        console_handler.setStream(io.TextIOWrapper(
-            console_handler.stream.detach(),
-            encoding='utf-8',
-            errors='replace'
-        ))
 
     logger.addHandler(console_handler)
 
