@@ -185,19 +185,22 @@ def get_hwid():
     system = platform.system()
 
     if system == "Windows":
-        # Try WMIC first
-        try:
-            result = subprocess.check_output(
-                'wmic csproduct get UUID',
-                shell=True,
-                stderr=subprocess.DEVNULL,
-                text=True
-            )
-            lines = [line.strip() for line in result.split('\n') if line.strip()]
-            if len(lines) > 1 and lines[1]:
-                return lines[1]
-        except FileNotFoundError:
-            pass  # wmic not found
+        wmic_path = Path(r"C:\Windows\System32\wbem\wmic.exe")
+
+        # Try WMIC if it exists
+        if wmic_path.exists():
+            try:
+                result = subprocess.check_output(
+                    'wmic csproduct get UUID',
+                    shell=True,
+                    stderr=subprocess.DEVNULL,
+                    text=True
+                )
+                lines = [line.strip() for line in result.split('\n') if line.strip()]
+                if len(lines) > 1 and lines[1]:
+                    return lines[1]
+            except Exception:
+                pass  # fallback to PowerShell if WMIC fails
 
         # Fallback: PowerShell
         try:
