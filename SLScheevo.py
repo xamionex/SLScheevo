@@ -130,7 +130,7 @@ def log_base(message):
         logger.handle(record)
 
 def log_info(message):
-    """Log info message with [→] symbol"""
+    """Log info message with [->] symbol"""
     logger = logging.getLogger()
     if logger.isEnabledFor(logging.INFO):
         record = logging.LogRecord(
@@ -146,7 +146,7 @@ def log_info(message):
         logger.handle(record)
 
 def log_success(message):
-    """Log success message with [✓] symbol"""
+    """Log success message with [OK] symbol"""
     logger = logging.getLogger()
     if logger.isEnabledFor(logging.INFO):
         record = logging.LogRecord(
@@ -162,7 +162,7 @@ def log_success(message):
         logger.handle(record)
 
 def log_error(message):
-    """Log error message with [✗] symbol"""
+    """Log error message with [XX] symbol"""
     logger = logging.getLogger()
     if logger.isEnabledFor(logging.ERROR):
         record = logging.LogRecord(
@@ -178,7 +178,7 @@ def log_error(message):
         logger.handle(record)
 
 def log_warning(message):
-    """Log warning message with [!] symbol"""
+    """Log warning message with [!!] symbol"""
     logger = logging.getLogger()
     if logger.isEnabledFor(logging.WARNING):
         record = logging.LogRecord(
@@ -748,7 +748,7 @@ def generate_stats_schema_bin(game_id, account_id, max_no_schema_in_row, client=
         elif schema_data and schema_data != "NO_SCHEMA":
             stats_schema_found = schema_data
             found_owner = owner_id
-            sys.stdout.write(f"\r[✓] Found valid schema using owner {owner_id} ({i}/{total_owners})\n")
+            sys.stdout.write(f"\r[OK] Found valid schema using owner {owner_id} ({i}/{total_owners})\n")
             sys.stdout.flush()
             break
         else:
@@ -759,12 +759,12 @@ def generate_stats_schema_bin(game_id, account_id, max_no_schema_in_row, client=
 
     if not stats_schema_found:
         if no_schema_count >= max_no_schema_in_row:
-            sys.stdout.write(f"\r[✗] No schema available for game {game_id} ({max_no_schema_in_row} consecutive 'no schema' responses)\n")
+            sys.stdout.write(f"\r[XX] No schema available for game {game_id} ({max_no_schema_in_row} consecutive 'no schema' responses)\n")
             sys.stdout.flush()
             if SILENT_MODE and VERBOSE:
                 sys.exit(EXIT_NO_SCHEMA_FOUND)
         else:
-            sys.stdout.write(f"\r[✗] No schema found for game {game_id} after checking {total_owners} owners\n")
+            sys.stdout.write(f"\r[XX] No schema found for game {game_id} after checking {total_owners} owners\n")
             sys.stdout.flush()
 
         if should_logout:
