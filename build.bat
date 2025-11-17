@@ -7,7 +7,7 @@ set VENV_DIR=.venv
 
 echo Setting up build environment...
 
-REM Check if Python is available
+:: Check if Python is available
 python --version >nul 2>&1
 if errorlevel 1 (
     echo Error: Python could not be found
@@ -16,18 +16,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Create virtual environment if it doesnt exist
-if not exist "%VENV_DIR%" (
-    echo Creating virtual environment...
-    python -m venv "%VENV_DIR%"
-)
+:: Create virtual environment
+echo Creating Python virtual environment...
+python -m venv .venv
 
-REM Activate virtual environment
+:: Activate virtual environment
 echo Activating virtual environment...
-call "%VENV_DIR%\Scripts\activate.bat"
+call .venv\Scripts\activate.bat
 
-REM Upgrade pip and dependencies
-echo Upgrading pip and ensuring requirements are installed...
+:: Install requirements
+echo Installing requirements...
 python -m pip install --upgrade pip setuptools wheel pyinstaller
 pip install -r requirements.txt
 

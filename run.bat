@@ -1,13 +1,19 @@
 @echo off
+cd "%~dp0"
 
-REM build first
-build.bat
+:: Create virtual environment
+echo Creating Python virtual environment...
+python -m venv .venv
 
-REM Activate virtual environment
+:: Activate virtual environment
+echo Activating virtual environment...
 call .venv\Scripts\activate.bat
 
-REM Run the script
-python SLScheevo.py %*
+:: Install requirements
+echo Installing requirements...
+pip install -r requirements.txt
 
-REM Deactivate virtual environment
-call .venv\Scripts\deactivate.bat
+:: Run the main script
+python src/main.py
+
+pause
