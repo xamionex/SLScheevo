@@ -1132,9 +1132,9 @@ def main():
     install_global_exception_logger()
 
     # Clear screen based on platform
-    if args.noclear and platform.system() == "Windows":
+    if not args.noclear and platform.system() == "Windows":
         os.system('cls')
-    else:
+    elif not args.noclear:
         os.system('clear')
 
     determine_steam_directory()
