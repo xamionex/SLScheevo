@@ -1098,6 +1098,7 @@ def main():
     parser.add_argument('--login', type=str, help='Login using AccountID, SteamID, Steam2 ID, Steam3 ID, or username')
     parser.add_argument('--silent', action='store_true', help='Silent mode - no input prompts, exit with status codes')
     parser.add_argument('--verbose', action='store_true', help='Exits on non-critical statuses like no schemas for appid and such')
+    parser.add_argument('--noclear', action='store_true', help='Don\'t clear console when starting, for developers')
     parser.add_argument('--appid', type=str, help='Comma-separated list of app IDs to generate schemas for')
     parser.add_argument('--save-dir', type=str, help='Base directory to save data and outputs (overrides default script-based base dir)')
 
@@ -1131,7 +1132,7 @@ def main():
     install_global_exception_logger()
 
     # Clear screen based on platform
-    if platform.system() == "Windows":
+    if args.noclear and platform.system() == "Windows":
         os.system('cls')
     else:
         os.system('clear')
