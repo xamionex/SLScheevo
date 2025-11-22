@@ -14,4 +14,4 @@ echo "Installing requirements..."
 pip install -r requirements.txt
 
 # Run the main script with preserved environment
-exec python SLScheevo.py
+exec python SLScheevo.py $@
