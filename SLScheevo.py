@@ -216,32 +216,249 @@ class SteamLogin:
         self.main = main
         self.logger = main.logger
 
-    # Steam ids with public profiles that own a lot of games
-    TOP_OWNER_IDS = [
-        76561198028121353, 76561197979911851, 76561198017975643, 76561197993544755,
-        76561198355953202, 76561198001237877, 76561198237402290, 76561198152618007,
-        76561198355625888, 76561198213148949, 76561197969050296, 76561198217186687,
-        76561198037867621, 76561198094227663, 76561198019712127, 76561197963550511,
-        76561198134044398, 76561198001678750, 76561197973009892, 76561198044596404,
-        76561197976597747, 76561197969810632, 76561198095049646, 76561198085065107,
-        76561198864213876, 76561197962473290, 76561198388522904, 76561198033715344,
-        76561197995070100, 76561198313790296, 76561198063574735, 76561197996432822,
-        76561197976968076, 76561198281128349, 76561198154462478, 76561198027233260,
-        76561198842864763, 76561198010615256, 76561198035900006, 76561198122859224,
-        76561198235911884, 76561198027214426, 76561197970825215, 76561197968410781,
-        76561198104323854, 76561198001221571, 76561198256917957, 76561198008181611,
-        76561198407953371, 76561198062901118,
-    ]
+    def setup_login_credentials(self, login_input=None):
+        """Setup all login credentials and target information"""
+        self.client = SteamClient()
+        self.saved_logins = self.load_saved_logins()
+        self.login_input = login_input
 
-    STEAMID64_BASE = 76561197960265728  # Valve's base offset for public Steam64 IDs
+        # Parse target account info
+        self.target_username, self.target_account_id, self.target_steam_id64 = \
+            self.get_target_account_info(login_input)
+
+        # Get environment credentials
+        self.env_username = os.environ.get('STEAMUSERNAME', '')
+        self.env_password = os.environ.get('STEAMPASSWORD', '')
+
+        # Find saved login
+        self.saved_username, self.saved_refresh_token = self.find_saved_login()
+
+        # Determine final username
+        self.username = self.determine_username()
+
+        # Find refresh token
+        self.refresh_token = self.find_refresh_token()
+
+    def login(self, login_input=None):
+        """Login to Steam using saved logins or interactive login"""
+        # Step 1: Setup all login credentials
+        self.setup_login_credentials(login_input)
+
+        # Step 2: Perform login cycle
+        result = self.attempt_login()
+
+        # Step 3: Handle login result
+        if result != EResult.OK:
+            self.logger.log_error(f"Steam login failed: {result.name}")
+            self.client.logout()
+            sys.exit(EXIT_LOGIN_FAILED)
+
+        # Extract account info
+        self.steam_id64 = self.client.steam_id.as_64
+        self.account_id = self.client.steam_id.account_id
+
+        # Step 4: Save successful login data
+        self.save_successful_login()
+
+        self.logger.log_success("Logged into Steam successfully")
+        return self.client, self.steam_id64, self.account_id
+
+    def get_username_silent_mode(self):
+        """Handle silent mode when no username is available"""
+        last_account = self.load_last_account()
+        if last_account:
+            self.logger.log_info(f"Using last account: {last_account}")
+            return self.login(last_account)
+        else:
+            self.logger.log_error("No username provided, please select a user with --login. Read more with --help")
+            sys.exit(EXIT_NO_ACCOUNT_SPECIFIED)
+
+    def determine_username(self):
+        """Determine the final username through various methods"""
+        username = self.saved_username or self.target_username or self.target_steam_id64 or self.env_username
+
+        if not username:
+            username = self.get_username_from_user()
+
+        return username
+
+    def get_username_from_user(self):
+        """Get username through interactive selection or input"""
+        # Try interactive selection first
+        selected_username = self.select_account_interactively()
+        if selected_username:
+            return selected_username
+
+        # Fallback to manual input
+        if self.main.SILENT_MODE:
+            return self.get_username_silent_mode()
+
+        self.logger.log_base("No Steam accounts found, please log in manually")
+        return input("Steam Username: ").strip()
+
+    def select_account_interactively(self):
+        """Let user select an account from available options"""
+        available_accounts = self.get_available_accounts()
+        if not available_accounts:
+            return None
+
+        self.logger.log_info("Available accounts:")
+        for i, user in enumerate(available_accounts, 1):
+            self.logger.log_base(f"[{i}]: {user}")
+
+        try:
+            num = int(self.logger.prompt("Choose an account to login (0 for new account):"))
+            if 0 < num <= len(available_accounts):
+                return available_accounts[num - 1]
+        except ValueError:
+            pass
+
+        return None
+
+    def get_available_accounts(self):
+        """Get list of available accounts from various sources"""
+        accounts = []
+
+        # Get accounts from loginusers.vdf
+        vdf_accounts = self.parse_loginusers_vdf()
+        accounts.extend(vdf_accounts)
+
+        # Get accounts from saved logins
+        saved_logins = self.load_saved_logins()
+        for login_data in saved_logins.values():
+            if "username" in login_data and login_data["username"] not in accounts:
+                accounts.append(login_data["username"])
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_accounts = []
+        for account in accounts:
+            if account not in seen:
+                seen.add(account)
+                unique_accounts.append(account)
+
+        return unique_accounts
+
+    def attempt_login(self):
+        """Perform the main login"""
+        result = None
+        prompt_for_unavailable = True
+
+        while result in (EResult.TryAnotherCM, EResult.ServiceUnavailable, EResult.InvalidPassword, None):
+
+            # Handle connection issues
+            if result in (EResult.TryAnotherCM, EResult.ServiceUnavailable):
+                if prompt_for_unavailable and result == EResult.ServiceUnavailable:
+                    if not self.handle_service_unavailable():
+                        break
+                    prompt_for_unavailable = False
+                self.client.reconnect(maxdelay=15)
+
+            # Handle authentication failures
+            if result == EResult.InvalidPassword:
+                self.logger.log_error("Invalid password or refresh_token.")
+                self.logger.log_error(f"Correct the password or delete '{self.main.SAVED_LOGINS_FILE}' and try again.")
+                self.client.logout()
+                sys.exit(EXIT_LOGIN_FAILED)
+
+            # Get credentials via web auth if needed
+            if not self.refresh_token:
+                if not self.perform_web_authentication():
+                    self.client.logout()
+                    sys.exit(EXIT_LOGIN_FAILED)
+
+            result = self.client.login(self.username, self.env_password, self.refresh_token)
+
+        return result
+
+    def handle_service_unavailable(self):
+        """Handle Steam service unavailable scenario"""
+        if self.main.SILENT_MODE:
+            return False
+
+        while True:
+            answer = input("[!] Steam is down. Keep retrying? [y/n]: ").lower()
+            if answer in 'yn':
+                return answer == 'y'
+
+    def perform_web_authentication(self):
+        """Perform web-based authentication when no refresh token exists"""
+        if not self.env_password and self.main.SILENT_MODE:
+            return False
+
+        try:
+            webauth = WebAuth()
+            webauth.cli_login(self.username, self.env_password)
+            self.username = webauth.username
+            self.env_password = webauth.password
+            self.refresh_token = webauth.refresh_token
+            return True
+        except Exception as e:
+            self.logger.log_error(f'Web authentication failed: {e}')
+            return False
+
+    def save_successful_login(self):
+        """Save login data after successful authentication"""
+        if self.refresh_token:
+            self.saved_logins[self.steam_id64] = {
+                "username": self.username,
+                "refresh_token": self.refresh_token,
+                "account_id": self.account_id,
+                "steam_id64": self.steam_id64
+            }
+
+            if self.save_saved_logins(self.saved_logins):
+                self.logger.log_success(f"Saved encrypted login token for {self.username}")
+
+        # Save last used account
+        account_identifier = self.login_input if self.login_input else self.username
+        self.save_last_account(account_identifier)
+
+        # Add our account to owner list
+        if self.steam_id64 not in self.main.TOP_OWNER_IDS:
+            self.main.TOP_OWNER_IDS.insert(0, self.steam_id64)
+            self.logger.log_info(f"Added your account ({self.steam_id64}) to owner list")
+
+    def get_target_account_info(self, login_input):
+        """Parse login input to determine target account"""
+        if not login_input:
+            return None, None, None
+
+        target_account_id, target_steam_id64 = self.parse_steam_id(login_input)
+        target_username = login_input if not target_account_id else None
+
+        return target_username, target_account_id, target_steam_id64
+
+    def find_saved_login(self):
+        """Find matching login in saved logins database"""
+        if self.target_steam_id64 and self.target_steam_id64 in self.saved_logins:
+            login_data = self.saved_logins[self.target_steam_id64]
+            return login_data.get("username", ""), login_data.get("refresh_token")
+        elif self.target_username and self.target_username in self.saved_logins:
+            login_data = self.saved_logins[self.target_username]
+            return login_data.get("username", ""), login_data.get("refresh_token")
+
+        return "", None
+
+    def find_refresh_token(self):
+        """Find refresh token for the current username"""
+        if self.saved_refresh_token:
+            return self.saved_refresh_token
+
+        # Search all saved logins for this username
+        for login_data in self.saved_logins.values():
+            if login_data.get("username") == self.username:
+                return login_data.get("refresh_token")
+
+        return None
 
     def steamid64_from_account_id(self, account_id: int) -> int:
         """Convert AccountID (32-bit) to public SteamID64"""
-        return self.STEAMID64_BASE + account_id
+        return self.main.STEAMID64_BASE + account_id
 
     def account_id_from_steamid64(self, steamid64: int) -> int:
         """Extract 32-bit AccountID from public Steam64"""
-        return steamid64 - self.STEAMID64_BASE
+        return steamid64 - self.main.STEAMID64_BASE
 
     def parse_steam_id(self, identifier: str):
         identifier = identifier.strip()
@@ -579,185 +796,6 @@ class SteamLogin:
 
         return [name for _, name in users]
 
-    def get_available_accounts(self):
-        """Get list of available accounts from various sources"""
-        accounts = []
-
-        # Get accounts from loginusers.vdf
-        vdf_accounts = self.parse_loginusers_vdf()
-        accounts.extend(vdf_accounts)
-
-        # Get accounts from saved logins
-        saved_logins = self.load_saved_logins()
-        for login_data in saved_logins.values():
-            if "username" in login_data and login_data["username"] not in accounts:
-                accounts.append(login_data["username"])
-
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_accounts = []
-        for account in accounts:
-            if account not in seen:
-                seen.add(account)
-                unique_accounts.append(account)
-
-        return unique_accounts
-
-    def login(self, login_input=None):
-        """Login to Steam using saved logins or interactive login"""
-        client = SteamClient()
-
-        # Try environment variables first
-        USERNAME = os.environ.get('STEAMUSERNAME', '')
-        PASSWORD = os.environ.get('STEAMPASSWORD', '')
-
-        # Parse login input if provided
-        target_username = None
-        target_account_id = None
-        target_steam_id64 = None
-
-        if login_input:
-            target_account_id, target_steam_id64 = self.parse_steam_id(login_input)
-            if not target_account_id:
-                # If we can't parse as ID, assume it's a username
-                target_username = login_input
-
-        # Load saved logins
-        saved_logins = self.load_saved_logins()
-
-        # Find matching login
-        REFRESH_TOKEN = None
-        if target_steam_id64 and target_steam_id64 in saved_logins:
-            login_data = saved_logins[target_steam_id64]
-            USERNAME = login_data.get("username", "")
-            REFRESH_TOKEN = login_data.get("refresh_token")
-        elif target_username and target_username in saved_logins:
-            login_data = saved_logins[target_username]
-            USERNAME = login_data.get("username", "")
-            REFRESH_TOKEN = login_data.get("refresh_token")
-        elif target_steam_id64 or target_username:
-            # We have a target but no saved login
-            USERNAME = target_username or target_steam_id64 or ""
-
-        # If no username from environment or target, let user choose
-        if not USERNAME and not self.main.SILENT_MODE:
-            available_accounts = self.get_available_accounts()
-            if available_accounts:
-                self.logger.log_info("Available accounts:")
-                for i, user in enumerate(available_accounts, 1):
-                    self.logger.log_base(f"[{i}]: {user}")
-                try:
-                    num = int(self.logger.prompt("Choose an account to login (0 for new account):"))
-                    if 0 < num <= len(available_accounts):
-                        USERNAME = available_accounts[num - 1]
-                except ValueError:
-                    pass
-
-        # Still no username? ask user (unless silent mode)
-        if not USERNAME:
-            if self.main.SILENT_MODE:
-                # In silent mode, try to use last account
-                last_account = self.load_last_account()
-                if last_account:
-                    self.logger.log_info(f"Using last account: {last_account}")
-                    # Recursively call with last account
-                    return self.login(last_account)
-                else:
-                    self.logger.log_error("No username provided, please select a user with --login. Read more with --help")
-                    sys.exit(EXIT_NO_ACCOUNT_SPECIFIED)
-            self.logger.log_base("No Steam accounts found, please log in manually")
-            USERNAME = input("Steam Username: ").strip()
-
-        # Try to get refresh token from saved logins if not already found
-        if not REFRESH_TOKEN:
-            for login_data in saved_logins.values():
-                if login_data.get("username") == USERNAME:
-                    REFRESH_TOKEN = login_data.get("refresh_token")
-                    break
-
-        webauth, result = WebAuth(), None
-        prompt_for_unavailable = True
-
-        while result in (
-            EResult.TryAnotherCM, EResult.ServiceUnavailable,
-            EResult.InvalidPassword, None):
-
-            if result in (EResult.TryAnotherCM, EResult.ServiceUnavailable):
-                if prompt_for_unavailable and result == EResult.ServiceUnavailable:
-                    if self.main.SILENT_MODE:
-                        client.logout()
-                        sys.exit(EXIT_LOGIN_FAILED)
-
-                    while True:
-                        answer = input("[!] Steam is down. Keep retrying? [y/n]: ").lower()
-                        if answer in 'yn':
-                            break
-
-                    prompt_for_unavailable = False
-                    if answer == 'n':
-                        break
-
-                client.reconnect(maxdelay=15)
-            elif result == EResult.InvalidPassword:
-                self.logger.log_error("Invalid password or refresh_token.")
-                self.logger.log_error(f"Correct the password or delete '{self.main.SAVED_LOGINS_FILE}' and try again.")
-                client.logout()
-                sys.exit(EXIT_LOGIN_FAILED)
-
-            if not REFRESH_TOKEN:
-                try:
-                    if not PASSWORD:
-                        if self.main.SILENT_MODE:
-                            client.logout()
-                            sys.exit(EXIT_INPUT_REQUIRED)
-                    webauth.cli_login(USERNAME, PASSWORD)
-                except Exception as e:
-                    self.logger.log_error(f'Login failed: {e}')
-                    client.logout()
-                    sys.exit(EXIT_LOGIN_FAILED)
-
-                USERNAME, PASSWORD = webauth.username, webauth.password
-                REFRESH_TOKEN = webauth.refresh_token
-
-            result = client.login(USERNAME, PASSWORD, REFRESH_TOKEN)
-
-        steam_id64 = client.steam_id.as_64
-        account_id = client.steam_id.account_id
-
-        # Save refresh token (encrypted)
-        if REFRESH_TOKEN:
-            login_key = steam_id64
-
-            saved_logins[login_key] = {
-                "username": USERNAME,
-                "refresh_token": REFRESH_TOKEN,
-                "account_id": account_id,
-                "steam_id64": steam_id64
-            }
-
-            if self.save_saved_logins(saved_logins):
-                self.logger.log_success(f"Saved encrypted login token for {USERNAME}")
-            else:
-                self.logger.log_error(f"Could not save encrypted login token for {USERNAME}")
-
-        # Save last used account identifier
-        if login_input:
-            self.save_last_account(login_input)
-        else:
-            self.save_last_account(USERNAME)
-
-        if result == EResult.OK:
-            self.logger.log_success("Logged into Steam successfully")
-            # Add our own account ID to the top of the owner list
-            if steam_id64 not in self.TOP_OWNER_IDS:
-                self.TOP_OWNER_IDS.insert(0, steam_id64)
-                self.logger.log_info(f"Added your account ({steam_id64}) to owner list")
-            return client, steam_id64, account_id
-        else:
-            self.logger.log_error(f"Steam login failed: {result.name}")
-            client.logout()
-            sys.exit(EXIT_LOGIN_FAILED)
-
 class SteamUtils:
     """Class to handle Steam utility operations"""
 
@@ -883,7 +921,7 @@ class SteamUtils:
                 return False
             should_logout = True
 
-        total_owners = len(self.steam_login.TOP_OWNER_IDS)
+        total_owners = len(self.main.TOP_OWNER_IDS)
         self.logger.log_info(f"Checking {total_owners} potential owners")
 
         stats_schema_found = None
@@ -891,7 +929,7 @@ class SteamUtils:
         no_schema_count = 0
 
         spinner = itertools.cycle("|/-\\")
-        for i, owner_id in enumerate(self.steam_login.TOP_OWNER_IDS, start=1):
+        for i, owner_id in enumerate(self.main.TOP_OWNER_IDS, start=1):
             sys.stdout.write(f"\r[{next(spinner)}] Checked {i-1}/{total_owners} owners... (no-schema streak: {no_schema_count}/{max_no_schema_in_row})")
             sys.stdout.flush()
 
@@ -966,27 +1004,37 @@ class SteamUtils:
             file.touch(exist_ok=True)
 
     def get_maximum_tries(self):
-        """Read maximum tries from file or create default file with value 5"""
-        max_tries = 5
+        """Read maximum tries from file or create default file"""
+        max_tries = self.main.DEFAULT_MAX_TRIES
         try:
             if self.main.MAX_TRIES_FILE.exists():
                 with open(self.main.MAX_TRIES_FILE, 'r') as f:
-                    content = f.read().strip()
-                    if content.isdigit():
-                        max_tries = int(content)
+                    content = f.read()
+
+                    # Remove everything except digits
+                    digits = ''.join(ch for ch in content if ch.isdigit())
+
+                    if digits:
+                        max_tries = int(digits)
                         self.logger.log_info(f"Using maximum tries from file: {max_tries}")
                     else:
-                        self.logger.log_error(f"Invalid content in {self.main.MAX_TRIES_FILE}, using default value: {max_tries}")
+                        self.logger.log_error(f"Invalid content in {self.main.MAX_TRIES_FILE}")
+                        self.create_default_maximum_tries_files()
             else:
-                # Create the file with default value 5
-                self.main.MAX_TRIES_FILE.parent.mkdir(parents=True, exist_ok=True)
-                with open(self.main.MAX_TRIES_FILE, 'w') as f:
-                    f.write("5")
-                self.logger.log_info(f"Created {self.main.MAX_TRIES_FILE} with default value: {max_tries}")
+                self.create_default_maximum_tries_files()
+
         except Exception as e:
             self.logger.log_error(f"Error reading maximum_tries file: {e}, using default value: {max_tries}")
 
         return max_tries
+
+
+    def create_default_maximum_tries_files(self):
+        """Create the file with default value 5"""
+        self.main.MAX_TRIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.main.MAX_TRIES_FILE, 'w') as f:
+            f.write(f"{self.main.DEFAULT_MAX_TRIES}")
+        self.logger.log_info(f"Created {self.main.MAX_TRIES_FILE} with default value: {self.main.DEFAULT_MAX_TRIES}")
 
     def copy_bins_to_steam_stats(self):
         """
@@ -1091,7 +1139,27 @@ class Main:
     """Main class to hold the application state and coordinate operations"""
 
     def __init__(self):
-        # Initialize all the global variables as instance variables
+        self.DEFAULT_MAX_TRIES = 3
+
+        # Steam ids with public profiles that own a lot of games
+        self.TOP_OWNER_IDS = [
+            76561198028121353, 76561197979911851, 76561198017975643, 76561197993544755,
+            76561198355953202, 76561198001237877, 76561198237402290, 76561198152618007,
+            76561198355625888, 76561198213148949, 76561197969050296, 76561198217186687,
+            76561198037867621, 76561198094227663, 76561198019712127, 76561197963550511,
+            76561198134044398, 76561198001678750, 76561197973009892, 76561198044596404,
+            76561197976597747, 76561197969810632, 76561198095049646, 76561198085065107,
+            76561198864213876, 76561197962473290, 76561198388522904, 76561198033715344,
+            76561197995070100, 76561198313790296, 76561198063574735, 76561197996432822,
+            76561197976968076, 76561198281128349, 76561198154462478, 76561198027233260,
+            76561198842864763, 76561198010615256, 76561198035900006, 76561198122859224,
+            76561198235911884, 76561198027214426, 76561197970825215, 76561197968410781,
+            76561198104323854, 76561198001221571, 76561198256917957, 76561198008181611,
+            76561198407953371, 76561198062901118,
+        ]
+
+        self.STEAMID64_BASE = 76561197960265728  # Valve's base offset for public Steam64 IDs
+
         self.BASE_DIR = Path(os.path.dirname(os.path.abspath(sys.argv[0])))
         self.DATA_DIR = self.BASE_DIR / "data"
         self.OUTPUT_DIR = self.DATA_DIR / "bins"
