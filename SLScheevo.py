@@ -268,7 +268,9 @@ class SteamLogin:
         last_account = self.load_last_account()
         if last_account:
             self.logger.log_info(f"Using last account: {last_account}")
-            return self.login(last_account)
+            # Just return the username, not the full login result
+            # The login() method will be called again with this username
+            return last_account
         else:
             self.logger.log_error("No username provided, please select a user with --login. Read more with --help")
             sys.exit(EXIT_NO_ACCOUNT_SPECIFIED)
@@ -284,15 +286,16 @@ class SteamLogin:
 
     def get_username_from_user(self):
         """Get username through interactive selection or input"""
-        # Try interactive selection first
+        # In silent mode, directly use the last saved account instead of interactive selection
+        if self.main.SILENT_MODE:
+            return self.get_username_silent_mode()
+
+        # Try interactive selection first (interactive mode only)
         selected_username = self.select_account_interactively()
         if selected_username:
             return selected_username
 
         # Fallback to manual input
-        if self.main.SILENT_MODE:
-            return self.get_username_silent_mode()
-
         self.logger.log_base("No Steam accounts found, please log in manually")
         return input("Steam Username: ").strip()
 
