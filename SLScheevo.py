@@ -1196,6 +1196,7 @@ class Main:
         parser.add_argument('--noclear', action='store_true', help='Don\'t clear console when starting, for developers')
         parser.add_argument('--appid', type=str, help='Comma-separated list of app IDs to generate schemas for')
         parser.add_argument('--save-dir', type=str, help='Base directory to save data and outputs (overrides default script-based base dir)')
+        parser.add_argument('--max-tries', type=int, help='Maximum number of consecutive "no schema" responses before giving up')
 
         args = parser.parse_args()
 
@@ -1234,7 +1235,11 @@ class Main:
 
         self.steam_utils.determine_steam_directory()
         self.steam_utils.ensure_directories()
-        max_no_schema_in_row = self.steam_utils.get_maximum_tries()
+        if args.max_tries is not None:
+            max_no_schema_in_row = args.max_tries
+            self.logger.log_info(f"Using command line max tries: {max_no_schema_in_row}")
+        else:
+            max_no_schema_in_row = self.steam_utils.get_maximum_tries()
 
         # Login first to get client
         if args.login:
