@@ -822,37 +822,16 @@ class SteamUtils:
                 sys.exit(EXIT_STEAM_NOT_FOUND)
         else:
             native_path = Path.home() / ".local/share/Steam"
-            flatpak_path = Path.home() / ".var/app/com.valvesoftware.Steam/.local/share/Steam"
+            symlink_path = Path.home() / ".steam/steam"
 
-            native_exists = native_path.exists()
-            flatpak_exists = flatpak_path.exists()
-
-            if native_exists and flatpak_exists:
-                if self.main.SILENT_MODE:
-                    self.main.STEAM_DIR = native_path
-                else:
-                    self.logger.log_base("Found both native and Flatpak Steam installations:")
-                    self.logger.log_base(f"[1] Native: {native_path}")
-                    self.logger.log_base(f"[2] Flatpak: {flatpak_path}")
-                    while True:
-                        try:
-                            choice = int(input("Which one to use? (1/2): "))
-                            if choice == 1:
-                                self.main.STEAM_DIR = native_path
-                                break
-                            elif choice == 2:
-                                self.main.STEAM_DIR = flatpak_path
-                                break
-                            else:
-                                self.logger.log_base("Invalid input, please enter 1 or 2.")
-                        except ValueError:
-                            self.logger.log_base("Invalid input, please enter 1 or 2.")
-            elif native_exists:
+            if native_path.exists():
                 self.main.STEAM_DIR = native_path
-            elif flatpak_exists:
-                self.main.STEAM_DIR = flatpak_path
+                self.logger.log_base(f"Using native Steam installation: {native_path}")
+            elif symlink_path.exists():
+                self.main.STEAM_DIR = symlink_path
+                self.logger.log_base(f"Using symlink Steam installation: {symlink_path}")
             else:
-                self.logger.log_error("No Steam installation found.")
+                self.logger.log_error("No Steam installation found in ~/.local/share/Steam or ~/.steam/steam")
                 sys.exit(EXIT_STEAM_NOT_FOUND)
 
         if not self.main.STEAM_DIR.exists():
