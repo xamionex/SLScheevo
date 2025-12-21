@@ -1,17 +1,25 @@
 #!/bin/bash
 cd "$(dirname "$(realpath "$0")")"
 
-# Create virtual environment
-echo "Creating Python virtual environment..."
-python3 -m venv .venv
+venv() {
+    python3 -m venv .venv
+    source .venv/bin/activate
+    if [ -f "requirements.txt" ]; then
+        pip install -r requirements.txt
+    else
+        echo "missing requirements.txt, slscheevo might not work"
+    fi
+}
 
-# Activate virtual environment
-echo "Activating virtual environment..."
-source .venv/bin/activate
-
-# Install requirements
-echo "Installing requirements..."
-pip install -r requirements.txt
+if [ ! $NOVENV ]; then
+    venv
+else
+    if [ -f ".venv/bin/activate" ]; then
+        source .venv/bin/activate
+    else
+        venv
+    fi
+fi
 
 # Run the main script with preserved environment
 exec python SLScheevo.py $@
