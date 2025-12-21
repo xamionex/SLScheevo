@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import concurrent.futures
 import json
+import vdf
 import os
 import re
 import shutil
@@ -319,26 +320,30 @@ class SteamLogin:
         return None
 
     def get_available_accounts(self):
-        """Get list of available accounts from various sources"""
+        """Get list of available account names from various sources"""
         accounts = []
 
-        # Get accounts from loginusers.vdf
+        # Accounts from loginusers.vdf (dict keyed by steamid)
         vdf_accounts = self.parse_loginusers_vdf()
-        accounts.extend(vdf_accounts)
+        for user in vdf_accounts.values():
+            name = user.get("AccountName")
+            if name:
+                accounts.append(name)
 
-        # Get accounts from saved logins
+        # Accounts from saved logins
         saved_logins = self.load_saved_logins()
         for login_data in saved_logins.values():
-            if "username" in login_data and login_data["username"] not in accounts:
-                accounts.append(login_data["username"])
+            name = login_data.get("username")
+            if name:
+                accounts.append(name)
 
         # Remove duplicates while preserving order
         seen = set()
         unique_accounts = []
-        for account in accounts:
-            if account not in seen:
-                seen.add(account)
-                unique_accounts.append(account)
+        for name in accounts:
+            if name not in seen:
+                seen.add(name)
+                unique_accounts.append(name)
 
         return unique_accounts
 
@@ -784,20 +789,24 @@ class SteamLogin:
         return None
 
     def parse_loginusers_vdf(self):
-        """Return a list of all account names from loginusers.vdf"""
         if not self.main.LOGIN_FILE or not self.main.LOGIN_FILE.exists():
-            return []
+            return {}
 
-        content = self.main.LOGIN_FILE.read_text(encoding="utf-8", errors="ignore")
+        with self.main.LOGIN_FILE.open("r", encoding="utf-8", errors="ignore") as f:
+            data = vdf.load(f)
 
-        # Match all account entries
-        users = re.findall(
-            r'"(\d+)"\s*{\s*[^}]*?"AccountName"\s*"([^"]+)"',
-            content,
-            re.DOTALL
-        )
+        # data["users"] is keyed by SteamID
+        users = {
+            steamid: {
+                "AccountName": info.get("AccountName"),
+                "PersonaName": info.get("PersonaName"),
+                "MostRecent": info.get("MostRecent") == "1",
+                "Timestamp": int(info.get("Timestamp", 0)),
+            }
+            for steamid, info in data.get("users", {}).items()
+        }
 
-        return [name for _, name in users]
+        return users
 
 class SteamUtils:
     """Class to handle Steam utility operations"""
@@ -954,9 +963,10 @@ class SteamUtils:
                 f.write(stats_schema_found)
             self.logger.log_success(f"Saved {schema_path} ({len(stats_schema_found)} bytes)")
 
-            user_path = self.main.OUTPUT_DIR / f"UserGameStats_{account_id}_{game_id}.bin"
-            shutil.copyfile(self.main.TEMPLATE_FILE, user_path)
-            self.logger.log_success(f"Copied template to {user_path} ({self.main.TEMPLATE_FILE.stat().st_size} bytes)")
+            vdf_accounts = self.steam_login.parse_loginusers_vdf()
+            for steamid in vdf_accounts:
+                user_path = self.main.OUTPUT_DIR / f"UserGameStats_{self.steam_login.account_id_from_steamid64(int(steamid))}_{game_id}.bin"
+                shutil.copyfile(self.main.TEMPLATE_FILE, user_path)
         except Exception as e:
             self.logger.log_error(f"Error writing schema files: {e}")
             if should_logout:
@@ -1273,11 +1283,13 @@ class Main:
                 continue  # explicitly skipped
 
             # Check if schema file already exists in backup or destination
-            schema_file = f"UserGameStats_{account_id}_{app_id}.bin"
-            if (self.OUTPUT_DIR / schema_file).exists() or (self.DEST_DIR and (self.DEST_DIR / schema_file).exists()):
-                continue
+            vdf_accounts = self.steam_login.parse_loginusers_vdf()
+            for steamid in vdf_accounts:
+                schema_file = f"UserGameStats_{self.steam_login.account_id_from_steamid64(int(steamid))}_{app_id}.bin"
+                if (self.OUTPUT_DIR / schema_file).exists() or (self.DEST_DIR and (self.DEST_DIR / schema_file).exists()):
+                    continue
 
-            missing_app_ids.append(app_id)
+                missing_app_ids.append(app_id)
 
         if not missing_app_ids:
             self.logger.log_info("No missing stats files to generate")
