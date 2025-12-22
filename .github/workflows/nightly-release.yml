@@ -1,0 +1,133 @@
+name: Build and Release Nightly
+
+on:
+  push:
+    branches: [ "main" ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.github/**'
+      - 'docs/**'
+      - 'build.bat'
+      - 'build.sh'
+      - 'run.bat'
+      - 'run.sh'
+      - 'demonstration.gif'
+  workflow_dispatch:
+
+concurrency:
+  group: build-release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Binary
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip setuptools wheel pyinstaller
+          pip install -r requirements.txt
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          pyinstaller --onefile --name "SLScheevo-Windows" --distpath ./dist SLScheevo.py
+          powershell Compress-Archive -Path "dist\SLScheevo-Windows.exe" -DestinationPath "dist\SLScheevo-Windows.zip"
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          pyinstaller --onefile --name "SLScheevo-Linux" --distpath ./dist SLScheevo.py
+          tar -czvf dist/SLScheevo-Linux.tar.gz -C dist SLScheevo-Linux
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.os }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+          retention-days: 1
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          merge-multiple: true
+          path: dist
+
+      - name: Generate Version Tag
+        id: tag
+        run: echo "VERSION=nightly-$(date +'%Y%m%d-%H%M')-$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_ENV
+
+      - name: Determine Changelog Range
+        id: range
+        run: |
+          git fetch --tags --force
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          
+          if [ -z "$LAST_TAG" ]; then
+            START_SHA=$(git rev-list --max-parents=0 HEAD | tail -n 1)
+            echo "from_ref=$START_SHA" >> $GITHUB_OUTPUT
+          else
+            echo "from_ref=$LAST_TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build Changelog
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          fromTag: ${{ steps.range.outputs.from_ref }}
+          toTag: ${{ github.sha }}
+          failOnError: false
+          commitMode: true
+          configurationJson: |
+            {
+              "template": "# Changes\n\n#{{UNCATEGORIZED}}",
+              "pr_template": "- #{{TITLE}}",
+              "categories": [
+                {
+                    "title": "Changes",
+                    "labels": []
+                }
+              ]
+            }
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: "Build: ${{ env.VERSION }}"
+          body: ${{ steps.changelog.outputs.changelog }}
+          files: |
+            dist/*.zip
+            dist/*.tar.gz
+          prerelease: true
