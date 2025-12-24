@@ -407,9 +407,11 @@ class SteamLogin:
             # Handle connection issues (retryable)
             retry_count += 1
 
+            error_time = 0
             msg = f"An unrecognized error occurred when trying to login: {result}"
             if result == EResult.TryAnotherCM:
-                msg = "The Steam Servers aren't letting us login (TryAnotherCM) - Try waiting a while before contacting the servers again"
+                msg = "The Steam Servers aren't letting us login (TryAnotherCM) - Waiting longer before contacting the servers again"
+                error_time = 60
             elif result == EResult.Timeout:
                 msg = "The login attempt timed out (Timeout)"
             elif result == EResult.ServiceUnavailable:
@@ -421,11 +423,11 @@ class SteamLogin:
 
             base_wait = min(5 * (2 ** (retry_count - 1)), 60)
             jitter = base_wait * 0.1  # Add 10% random jitter
-            wait_time = base_wait + (time.time() % jitter)
+            wait_time = base_wait + (time.time() % jitter) + error_time
 
             self.logger.log_info(f"Waiting {wait_time:.1f} seconds before retry ({retry_count}/{'infinity' if self.main.INFINITE_RETRY else max_tries})")
-            time.sleep(wait_time)
             self.client.disconnect()
+            time.sleep(wait_time)
             continue
 
         # Get credentials via web auth if needed (only on success)
