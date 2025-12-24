@@ -228,7 +228,6 @@ class SteamLogin:
 
     def setup_login_credentials(self, login_input=None):
         """Setup all login credentials and target information"""
-        self.client = SteamClient()
         self.saved_logins = self.load_saved_logins()
         self.login_input = login_input
 
@@ -360,18 +359,19 @@ class SteamLogin:
         """Perform the main login"""
         result = None
         prompt_disabled = False
-        login_timeout = 60
-        retry_count = 0
+        login_timeout = 30
+        retry_count = 1
         max_tries = 10
+        self.client = SteamClient()
 
         while True:
             try:
-                if retry_count == 0:
+                print("")
+                if retry_count == 1:
                     self.logger.log_info(f"Logging in...")
                 else:
-                    self.logger.log_info(f"Login attempt {retry_count + 1}...")
+                    self.logger.log_info(f"Login attempt {retry_count}...")
                 with Timeout(login_timeout):
-                    self.client.connect()
                     result = self.client.login(self.username, self.env_password, self.refresh_token)
             except Timeout:
                 self.logger.log_warning(f"Login timed out after {login_timeout} seconds")
@@ -380,11 +380,10 @@ class SteamLogin:
                 self.logger.log_error(f"Login error: {e}")
                 result = None
 
+            extra_wait_time = 0
             if result == EResult.OK:
                 break
-
-            # Handle authentication failures (non-retryable)
-            if result == EResult.InvalidPassword:
+            elif result == EResult.InvalidPassword:
                 if self.refresh_token or self.main.SILENT_MODE:
                     self.logger.log_error("Looks like the token wasn't accepted or the password is wrong")
                     self.logger.log_error(f"Try deleting '{self.main.SAVED_LOGINS_FILE}' and then try again.")
@@ -394,6 +393,18 @@ class SteamLogin:
                     self.client.logout()
                     self.client.disconnect()
                     continue
+            elif result == EResult.TryAnotherCM:
+                self.logger.log_error("The Steam Servers aren't letting us login (TryAnotherCM) - Waiting longer before contacting the servers again")
+                extra_wait_time = 20
+            elif result == EResult.Timeout:
+                self.logger.log_error("The login attempt timed out (Timeout)")
+            elif result == EResult.ServiceUnavailable:
+                self.logger.log_error("The Steam Servers aren't available right now (ServiceUnavailable)")
+            else:
+                self.logger.log_error(f"An unrecognized error occurred when trying to login: {result}")
+
+            if self.main.SILENT_MODE and not self.main.INFINITE_RETRY and prompt_disabled:
+                sys.exit(EXIT_LOGIN_FAILED)
 
             if not self.main.SILENT_MODE and not prompt_disabled:
                 self.handle_service_unavailable()
@@ -404,30 +415,18 @@ class SteamLogin:
                 self.handle_service_unavailable()
                 max_tries += 5
 
-            # Handle connection issues (retryable)
-            retry_count += 1
-
-            error_time = 0
-            msg = f"An unrecognized error occurred when trying to login: {result}"
-            if result == EResult.TryAnotherCM:
-                msg = "The Steam Servers aren't letting us login (TryAnotherCM) - Waiting longer before contacting the servers again"
-                error_time = 60
-            elif result == EResult.Timeout:
-                msg = "The login attempt timed out (Timeout)"
-            elif result == EResult.ServiceUnavailable:
-                msg = "The Steam Servers aren't available right now (ServiceUnavailable)"
-
-            self.logger.log_error(msg)
-            if self.main.SILENT_MODE and not self.main.INFINITE_RETRY and prompt_disabled:
-                sys.exit(EXIT_LOGIN_FAILED)
-
             base_wait = min(5 * (2 ** (retry_count - 1)), 60)
             jitter = base_wait * 0.1  # Add 10% random jitter
-            wait_time = base_wait + (time.time() % jitter) + error_time
+            wait_time = base_wait + (time.time() % jitter) + extra_wait_time
 
-            self.logger.log_info(f"Waiting {wait_time:.1f} seconds before retry ({retry_count}/{'infinity' if self.main.INFINITE_RETRY else max_tries})")
+            self.logger.log_info(f"Waiting {wait_time:.1f} seconds before retrying ({retry_count}/{'infinity' if self.main.INFINITE_RETRY else max_tries})")
+            self.client.logout()
             self.client.disconnect()
-            time.sleep(wait_time)
+            time.sleep(wait_time * 0.3)
+            self.client = SteamClient()
+            time.sleep(wait_time * 0.7)
+
+            retry_count += 1
             continue
 
         # Get credentials via web auth if needed (only on success)
