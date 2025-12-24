@@ -832,15 +832,22 @@ class SteamUtils:
         else:
             native_path = Path.home() / ".local/share/Steam"
             symlink_path = Path.home() / ".steam/steam"
+            flatpak_path = Path.home() / ".var/app/com.valvesoftware.Steam/data/Steam"
 
             if native_path.exists():
                 self.main.STEAM_DIR = native_path
                 self.logger.log_base(f"Using native Steam installation: {native_path}")
+
             elif symlink_path.exists():
                 self.main.STEAM_DIR = symlink_path
                 self.logger.log_base(f"Using symlink Steam installation: {symlink_path}")
+
+            elif flatpak_path.exists():
+                self.main.STEAM_DIR = flatpak_path
+                self.logger.log_base(f"Using Flatpak Steam installation: {flatpak_path}")
+
             else:
-                self.logger.log_error("No Steam installation found in ~/.local/share/Steam or ~/.steam/steam")
+                self.logger.log_error("No Steam installation found in ~/.local/share/Steam, ~/.steam/steam, ~/.var/app/com.valvesoftware.Steam/data/Steam")
                 sys.exit(EXIT_STEAM_NOT_FOUND)
 
         if not self.main.STEAM_DIR.exists():
