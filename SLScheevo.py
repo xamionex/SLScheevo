@@ -360,7 +360,7 @@ class SteamLogin:
         """Perform the main login"""
         result = None
         prompt_disabled = False
-        login_timeout = 2
+        login_timeout = 60
         retry_count = 0
         max_tries = 10
 
@@ -419,7 +419,7 @@ class SteamLogin:
             if self.main.SILENT_MODE and not self.main.INFINITE_RETRY and prompt_disabled:
                 sys.exit(EXIT_LOGIN_FAILED)
 
-            base_wait = min(5 * (2 ** (retry_count - 1)), 1)
+            base_wait = min(5 * (2 ** (retry_count - 1)), 60)
             jitter = base_wait * 0.1  # Add 10% random jitter
             wait_time = base_wait + (time.time() % jitter)
 
