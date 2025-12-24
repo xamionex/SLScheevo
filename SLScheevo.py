@@ -11,7 +11,6 @@ import traceback
 import requests
 import platform
 import itertools
-import threading
 import base64
 import subprocess
 import uuid
@@ -19,6 +18,7 @@ import getpass
 import hashlib
 import argparse
 import logging
+from gevent import Timeout
 from pathlib import Path
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
@@ -201,8 +201,17 @@ class Logger:
 
     def prompt(self, msg: str) -> str:
         """Log a prompt with [→] but keep input on same line."""
-        # Get the formatted prefix from the logger (e.g. "[→] ")
-        prefix = ConsoleFormatter.SYMBOLS.get("INFO", "[→] ")
+        prefix = ConsoleFormatter.SYMBOLS.get("INFO", "[->] ")
+
+        # Print prefix and message WITHOUT newline
+        print(f"{prefix}{msg} ", end="", flush=True)
+
+        # Now take input
+        return input()
+
+    def promptwarn(self, msg: str) -> str:
+        """Log a prompt with [→] but keep input on same line."""
+        prefix = ConsoleFormatter.SYMBOLS.get("INFO", "[!!] ")
 
         # Print prefix and message WITHOUT newline
         print(f"{prefix}{msg} ", end="", flush=True)
@@ -250,7 +259,7 @@ class SteamLogin:
 
         # Step 3: Handle login result
         if result != EResult.OK:
-            self.logger.log_error(f"Steam login failed: {result.name}")
+            self.logger.log_error(f"Steam login failed, exiting")
             self.client.logout()
             sys.exit(EXIT_LOGIN_FAILED)
 
@@ -350,44 +359,98 @@ class SteamLogin:
     def attempt_login(self):
         """Perform the main login"""
         result = None
-        prompt_for_unavailable = True
+        prompt_disabled = False
+        login_timeout = 2
+        retry_count = 0
+        max_tries = 10
 
-        while result in (EResult.TryAnotherCM, EResult.ServiceUnavailable, EResult.InvalidPassword, None):
+        while True:
+            try:
+                if retry_count == 0:
+                    self.logger.log_info(f"Logging in...")
+                else:
+                    self.logger.log_info(f"Login attempt {retry_count + 1}...")
+                with Timeout(login_timeout):
+                    self.client.connect()
+                    result = self.client.login(self.username, self.env_password, self.refresh_token)
+            except Timeout:
+                self.logger.log_warning(f"Login timed out after {login_timeout} seconds")
+                result = EResult.Timeout
+            except Exception as e:
+                self.logger.log_error(f"Login error: {e}")
+                result = None
 
-            # Handle connection issues
-            if result in (EResult.TryAnotherCM, EResult.ServiceUnavailable):
-                if prompt_for_unavailable and result == EResult.ServiceUnavailable:
-                    if not self.handle_service_unavailable():
-                        break
-                    prompt_for_unavailable = False
-                self.client.reconnect(maxdelay=15)
+            if result == EResult.OK:
+                break
 
-            # Handle authentication failures
+            # Handle authentication failures (non-retryable)
             if result == EResult.InvalidPassword:
-                self.logger.log_error("Invalid password or refresh_token.")
-                self.logger.log_error(f"Correct the password or delete '{self.main.SAVED_LOGINS_FILE}' and try again.")
-                self.client.logout()
+                if self.refresh_token or self.main.SILENT_MODE:
+                    self.logger.log_error("Looks like the token wasn't accepted or the password is wrong")
+                    self.logger.log_error(f"Try deleting '{self.main.SAVED_LOGINS_FILE}' and then try again.")
+                    sys.exit(EXIT_LOGIN_FAILED)
+                else:
+                    self.logger.log_error("Invalid password. Please try again with the correct one")
+                    self.client.logout()
+                    self.client.disconnect()
+                    continue
+
+            if not self.main.SILENT_MODE and not prompt_disabled:
+                self.handle_service_unavailable()
+            prompt_disabled = True
+
+            # Ask if we should continue
+            if not self.main.INFINITE_RETRY and not self.main.SILENT_MODE and retry_count >= max_tries:
+                self.handle_service_unavailable()
+                max_tries += 5
+
+            # Handle connection issues (retryable)
+            retry_count += 1
+
+            msg = f"An unrecognized error occurred when trying to login: {result}"
+            if result == EResult.TryAnotherCM:
+                msg = "The Steam Servers aren't letting us login (TryAnotherCM) - Try waiting a while before contacting the servers again"
+            elif result == EResult.Timeout:
+                msg = "The login attempt timed out (Timeout)"
+            elif result == EResult.ServiceUnavailable:
+                msg = "The Steam Servers aren't available right now (ServiceUnavailable)"
+
+            self.logger.log_error(msg)
+            if self.main.SILENT_MODE and not self.main.INFINITE_RETRY and prompt_disabled:
                 sys.exit(EXIT_LOGIN_FAILED)
 
-            # Get credentials via web auth if needed
-            if not self.refresh_token:
-                if not self.perform_web_authentication():
-                    self.client.logout()
-                    sys.exit(EXIT_LOGIN_FAILED)
+            base_wait = min(5 * (2 ** (retry_count - 1)), 1)
+            jitter = base_wait * 0.1  # Add 10% random jitter
+            wait_time = base_wait + (time.time() % jitter)
 
-            result = self.client.login(self.username, self.env_password, self.refresh_token)
+            self.logger.log_info(f"Waiting {wait_time:.1f} seconds before retry ({retry_count}/{'infinity' if self.main.INFINITE_RETRY else max_tries})")
+            time.sleep(wait_time)
+            self.client.disconnect()
+            continue
+
+        # Get credentials via web auth if needed (only on success)
+        if not self.refresh_token and result not in (EResult.InvalidPassword, None):
+            if not self.perform_web_authentication():
+                self.client.logout()
+                sys.exit(EXIT_LOGIN_FAILED)
 
         return result
 
     def handle_service_unavailable(self):
-        """Handle Steam service unavailable scenario"""
-        if self.main.SILENT_MODE:
-            return False
-
+        """Handle Steam service unavailable scenario with y/n/i options"""
         while True:
-            answer = input("[!] Steam is down. Keep retrying? [y/n]: ").lower()
-            if answer in 'yn':
-                return answer == 'y'
+            answer = self.logger.promptwarn(f"Keep retrying? (y=yes, n=no, i=infinite): ").lower()
+            if answer == 'i':
+                self.main.INFINITE_RETRY = True
+                self.logger.log_info("Retrying infinitely. Press CTRL+C to cancel")
+                return
+            elif answer == 'y':
+                self.main.INFINITE_RETRY = False
+                self.logger.log_info("Retrying.")
+                return
+            else:
+                self.logger.log_info("No retry selected, exiting.")
+                sys.exit(EXIT_LOGIN_FAILED)
 
     def perform_web_authentication(self):
         """Perform web-based authentication when no refresh token exists"""
@@ -1193,11 +1256,13 @@ class Main:
         parser.add_argument('--appid', type=str, help='Comma-separated list of app IDs to generate schemas for')
         parser.add_argument('--save-dir', type=str, help='Base directory to save data and outputs (overrides default script-based base dir)')
         parser.add_argument('--max-tries', type=int, help='Maximum number of consecutive "no schema" responses before giving up')
+        parser.add_argument('--infinite-retry', action='store_true', help='Retry login attempts infinitely when encountering network errors')
 
         args = parser.parse_args()
 
         self.SILENT_MODE = args.silent
         self.VERBOSE = args.verbose
+        self.INFINITE_RETRY = args.infinite_retry
 
         # If user specified a save directory, update BASE_DIR and all dependent paths
         if args.save_dir:
