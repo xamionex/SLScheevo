@@ -359,7 +359,7 @@ class SteamLogin:
         """Perform the main login"""
         result = None
         prompt_disabled = False
-        login_timeout = 30
+        login_timeout = 60
         retry_count = 1
         max_tries = 10
         self.client = SteamClient()
