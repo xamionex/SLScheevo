@@ -372,7 +372,10 @@ class SteamLogin:
                 else:
                     self.logger.log_info(f"Login attempt {retry_count}...")
                 with Timeout(login_timeout):
-                    result = self.client.login(self.username, self.env_password, self.refresh_token)
+                    if self.env_password or self.refresh_token:
+                        result = self.client.login(self.username, self.env_password, self.refresh_token)
+                    else:
+                        result = self.client.login(self.username)
             except Timeout:
                 self.logger.log_warning(f"Login timed out after {login_timeout} seconds")
                 result = EResult.Timeout
