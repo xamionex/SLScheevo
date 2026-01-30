@@ -1354,14 +1354,15 @@ class Main:
             if app_id in skip_generation:
                 continue  # explicitly skipped
 
+            # Always generate
             # Check if schema file already exists in backup or destination
-            vdf_accounts = self.steam_login.parse_loginusers_vdf()
-            for steamid in vdf_accounts:
-                schema_file = f"UserGameStats_{self.steam_login.account_id_from_steamid64(int(steamid))}_{app_id}.bin"
-                if (self.OUTPUT_DIR / schema_file).exists() or (self.DEST_DIR and (self.DEST_DIR / schema_file).exists()):
-                    continue
+            #vdf_accounts = self.steam_login.parse_loginusers_vdf()
+            #for steamid in vdf_accounts:
+            #    schema_file = f"UserGameStats_{self.steam_login.account_id_from_steamid64(int(steamid))}_{app_id}.bin"
+            #    if (self.OUTPUT_DIR / schema_file).exists() or (self.DEST_DIR and (self.DEST_DIR / schema_file).exists()):
+            #        continue
 
-                missing_app_ids.append(app_id)
+            missing_app_ids.append(app_id)
 
         if not missing_app_ids:
             self.logger.log_info("No missing stats files to generate")
