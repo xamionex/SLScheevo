@@ -64,7 +64,7 @@ jobs:
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
-          powershell Compress-Archive -Path @("dist\SLScheevo-Windows.exe", "dist\data") -DestinationPath "dist\SLScheevo-Windows.zip"
+          powershell Compress-Archive -Path "dist\SLScheevo-Windows.exe", "dist\data" -DestinationPath "dist\SLScheevo-Windows.zip"
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
