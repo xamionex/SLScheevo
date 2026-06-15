@@ -45,13 +45,31 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           pyinstaller --onefile --name "SLScheevo-Windows" --distpath ./dist SLScheevo.py
-          powershell Compress-Archive -Path "dist\SLScheevo-Windows.exe" -DestinationPath "dist\SLScheevo-Windows.zip"
 
       - name: Build (Linux)
         if: runner.os == 'Linux'
         run: |
           pyinstaller --onefile --name "SLScheevo-Linux" --distpath ./dist SLScheevo.py
-          tar -czvf dist/SLScheevo-Linux.tar.gz -C dist SLScheevo-Linux
+
+      - name: Copy data folder to dist (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          Copy-Item -Path "data" -Destination "dist\data" -Recurse -Force
+
+      - name: Copy data folder to dist (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cp -r data dist/
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          powershell Compress-Archive -Path @("dist\SLScheevo-Windows.exe", "dist\data") -DestinationPath "dist\SLScheevo-Windows.zip"
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          tar -czvf dist/SLScheevo-Linux.tar.gz -C dist SLScheevo-Linux data
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
